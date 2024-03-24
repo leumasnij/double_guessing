@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<launch>
+
+  <node pkg="ur_robotouch" type="table_wall.py" name="collision_object" />
+
+</launch>
