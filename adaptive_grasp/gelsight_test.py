@@ -1,13 +1,11 @@
 import sys
 sys.path.append('../')
-# import os 
+import os 
 # print(os.getcwd())
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.ndimage.filters import maximum_filter, minimum_filter
-from scipy import ndimage
-from scipy.signal import fftconvolve
+saving_adr = '/media/okemo/extraHDD31/samueljin/'
 def resize_crop_mini(img, imgw, imgh):
     # remove 1/7th of border from each size
     border_size_x, border_size_y = int(img.shape[0] * (1 / 7)), int(np.floor(img.shape[1] * (1 / 7)))
@@ -21,8 +19,10 @@ def resize_crop_mini(img, imgw, imgh):
 def find_markers(frame):
     ''' detect markers '''
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) 
-    gray = cv2.GaussianBlur(gray, (7, 7), 5)
-    mask = cv2.inRange(gray, 5, 55)
+    gray = cv2.GaussianBlur(gray, (5, 5), 5)
+    mask = cv2.inRange(gray, 5, 50)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.erode(mask, kernel, iterations=1)
     num, labels = cv2.connectedComponents(mask)
     marker_center = []
     for i in range(1, num):
@@ -98,37 +98,35 @@ def displaycentres(img, marker_init, markerU, markerV):
             cv2.arrowedLine(img, (cX, cY), (cX + int(markerU[i]), cY + int(markerV[i])), (0, 255, 255), 2)
     return img
 def track_marker():
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
     # ret, frameI = cap.read()
     # markerI = mm.find_markers(frameI, frameI)
     print('start')
     ret, frame = cap.read()
     frameI = resize_crop_mini(frame, 640, 480)
     markersI = find_markers(frameI)
-    lk_params = dict(winSize=(15, 15),
-                 maxLevel=2,
-                 criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     old_markers = markersI
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    index = len([name for name in os.listdir(saving_adr) if os.path.isfile(os.path.join(saving_adr, name))] ) + 1
+    out = cv2.VideoWriter(saving_adr + 'output' + str(index) + '.avi', fourcc, 10.0, (640, 480))
     while True:
         ret, frame = cap.read()
         frame = resize_crop_mini(frame, 640, 480)
         markers = find_markers(frame)
         center_now, markerU, markerV = update_markerMotion(markers, old_markers, markersI)
         frame = displaycentres(frame, center_now, markerU, markerV)
+        old_markers = center_now
+        average_movement = np.mean(np.sqrt(markerU**2 + markerV**2))
+        cv2.putText(frame, 'Average Movement: ' + str(average_movement), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
 
-
-        
-            
-        # markers = gelsight.extract_markers(frame)
-        # markers = mm.find_markers(frame, frameI)
-        # markers, U, V = mm.update_markerMotion(markers, markerI, markerI)
-        # frame = mm.displaycentres(frame, markerI, U, V, 1)
-
-        # display_frame = frame.copy()
-        # display_frame = cv2.resize(frame, (656, 493))
         cv2.imshow('frame', frame)
         # print(display_frame.shape)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
+        out.write(frame)
+    cap.release()
+    out.release()
+    cv2.destroyAllWindows()
 
-track_marker()
+
+# track_marker()
