@@ -24,7 +24,7 @@ def set_force(force):
   try:
     service = rospy.ServiceProxy('/wsg_50_driver/set_force', Conf)
     service(force)
-  except rospy.ServiceException, e:
+  except rospy.ServiceException as e:
     print ("Service Call Failed: %s"%e)
 
 def move(width, speed = 50):
@@ -36,7 +36,7 @@ def move(width, speed = 50):
   try:
     service = rospy.ServiceProxy('/wsg_50_driver/move', Move)
     service(width, speed)
-  except rospy.ServiceException, e:
+  except rospy.ServiceException as e:
     print("Service call failed: %s"%e)
 
 def grasp(width, speed = 50):
@@ -45,5 +45,5 @@ def grasp(width, speed = 50):
   try:
     service = rospy.ServiceProxy('/wsg_50_driver/grasp', Move)
     service(width, speed)
-  except rospy.ServiceException, e:
+  except rospy.ServiceException as e:
     print ("Service Call Failed: %s"%e)
