@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 saving_adr = '/media/okemo/extraHDD31/samueljin/'
 def resize_crop_mini(img, imgw, imgh):
     # remove 1/7th of border from each size
-    border_size_x, border_size_y = int(img.shape[0]  / 7), int(img.shape[1]  / 7)
+    border_size_x, border_size_y = int(img.shape[0]  / 8), int(img.shape[1]  / 8)
     # print(border_size_x, border_size_y)
     # keep the ratio the same as the original image size
     img = img[border_size_x :img.shape[0] - border_size_x, border_size_y:img.shape[1] - border_size_y]

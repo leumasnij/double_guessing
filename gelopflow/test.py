@@ -3,9 +3,10 @@ from markertracker import MarkerTracker
 import threading
 import numpy as np
 import gelsight_test as gs
+import rospy
 class CameraCapture1:
     def __init__(self):
-        self.cap = cv2.VideoCapture(1)
+        self.cap = cv2.VideoCapture(0)
         self.ret, self.frame = self.cap.read()
         self.is_running = True
         thread = threading.Thread(target=self.update, args=())
@@ -27,22 +28,23 @@ class CameraCapture1:
 
 
 if __name__ == '__main__':
-    imgw = 640
-    imgh = 480
+    imgw = 960
+    imgh = 720
     camera = CameraCapture1()
+    rospy.sleep(1)
     ret, f0 = camera.read()
-    f0 = cv2.resize(f0, (imgw, imgh))
+    f0 = gs.resize_crop_mini(f0, imgw, imgh)
     f0gray = cv2.cvtColor(f0, cv2.COLOR_BGR2GRAY)
-    img = np.float32(f0) / 255.0
     # mtracker = MarkerTracker(img)
     # tracker = MarkerTracker()
     marker_centers = gs.find_markers(f0)
-    Ox = marker_centers[:, 1]
-    Oy = marker_centers[:, 0]
+    Ox = marker_centers[:, 0]
+    Oy = marker_centers[:, 1]
     nct = len(marker_centers)
-    old_gray = f0gray
-    lk_params = dict(winSize=(15, 15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
+    lk_params = dict(winSize=(15, 15), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     color = np.random.randint(0, 255, (100, 3))
+    old_gray = f0gray.copy()
 
     # Existing p0 array
     p0 = np.array([[Ox[0], Oy[0]]], np.float32).reshape(-1, 1, 2)
@@ -53,9 +55,10 @@ if __name__ == '__main__':
         p0 = np.append(p0, new_point, axis=0)
     while True:
         ret, frame = camera.read()
-        frame = cv2.resize(frame, (imgw, imgh))
+        frame = gs.resize_crop_mini(frame, imgw, imgh)
+        cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if ret:
-            cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+       
             p1, st, err = cv2.calcOpticalFlowPyrLK(old_gray, cur_gray, p0, None, **lk_params)
             good_new = p1[st == 1]
             good_old = p0[st == 1]
@@ -68,7 +71,9 @@ if __name__ == '__main__':
                 offrame = cv2.circle(offrame, (int(a), int(b)), 5, color[i].tolist(), -1)
             cv2.imshow('optical flow frame', cv2.resize(offrame, (2*offrame.shape[1], 2*offrame.shape[0])))
             # cv2.imshow('frame', offrame)
+            f0 = frame.copy()
             old_gray = cur_gray.copy()
+            # print('frame')
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
     camera.release()
