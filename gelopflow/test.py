@@ -3,7 +3,7 @@ from markertracker import MarkerTracker
 import threading
 import numpy as np
 import gelsight_test as gs
-import rospy
+
 class CameraCapture1:
     def __init__(self):
         self.cap = cv2.VideoCapture(0)
@@ -28,10 +28,10 @@ class CameraCapture1:
 
 
 if __name__ == '__main__':
-    imgw = 960
-    imgh = 720
+    imgw = 640
+    imgh = 480
     camera = CameraCapture1()
-    rospy.sleep(1)
+
     ret, f0 = camera.read()
     f0 = gs.resize_crop_mini(f0, imgw, imgh)
     f0gray = cv2.cvtColor(f0, cv2.COLOR_BGR2GRAY)
@@ -42,7 +42,7 @@ if __name__ == '__main__':
     Oy = marker_centers[:, 1]
     nct = len(marker_centers)
 
-    lk_params = dict(winSize=(15, 15), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+    lk_params = dict(winSize=(50, 50), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     color = np.random.randint(0, 255, (100, 3))
     old_gray = f0gray.copy()
 
@@ -63,12 +63,43 @@ if __name__ == '__main__':
             good_new = p1[st == 1]
             good_old = p0[st == 1]
             p0 = good_new.reshape(-1, 1, 2)
+
+            A_mat = []
+            b_mat = []
+            Mid = []
+            half_length = []
             for i, (new, old) in enumerate(zip(good_new, good_old)):
                 a, b = new.ravel()
                 ix  = int(Ox[i])
                 iy  = int(Oy[i])
+                if np.linalg.norm([a - ix, b - iy]) > 10:
+                    temp = (iy - b)/(ix - a)
+                    A_mat.append([1, (iy - b)/(ix - a)])
+                    mx = (a + ix)/2
+                    my = (b + iy)/2
+                    b_mat.append([mx + my*(iy - b)/(ix - a)])
+                    Mid.append([mx, my])
+                    half_length.append(np.linalg.norm([a - ix, b - iy])/2)
                 offrame = cv2.arrowedLine(frame, (ix,iy), (int(a), int(b)), (255,255,255), thickness=1, line_type=cv2.LINE_8, tipLength=.15)
                 offrame = cv2.circle(offrame, (int(a), int(b)), 5, color[i].tolist(), -1)
+
+            if len(A_mat) != 0:
+                A_mat = np.array(A_mat)
+                b_mat = np.array(b_mat)
+                ROC = np.linalg.inv(A_mat.T@A_mat)@A_mat.T@b_mat
+                print(ROC)
+                offrame = cv2.circle(offrame, (int(ROC[0]), int(ROC[1])), 5, (0, 255, 0), -1)
+                # cv2.putText(offrame, 'Rotate', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1, cv2.LINE_AA)
+                angle = 0
+                for i in range(len(Mid)):
+                    angle += (np.arctan((half_length[i])/(np.linalg.norm(Mid[i] - ROC)))*180/np.pi)*2
+                    offrame = cv2.line(offrame, (int(Mid[i][0]), int(Mid[i][1])), (int(ROC[0]), int(ROC[1])), (0, 255, 0), 1)
+                angle = angle/len(Mid)
+                cv2.putText(offrame, 'Angle: ' + str(angle), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+            # offrame = cv2.circle(offrame, (int(ROC[0]), int(ROC[1])), 5, (0, 255, 0), -1)
+
+            # cv2.putText(offrame, 'Average Movement: ' + str(movemnt), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1, cv2.LINE_AA)
+            # cv2.putText(offrame, 'Rotation: ' + str(rotation), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
             cv2.imshow('optical flow frame', cv2.resize(offrame, (2*offrame.shape[1], 2*offrame.shape[0])))
             # cv2.imshow('frame', offrame)
             f0 = frame.copy()
