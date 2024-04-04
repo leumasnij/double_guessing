@@ -116,30 +116,41 @@ class MarkerTracker:
 
 
 class OpFlowTracker:
-    def __init__(self):
+    def __init__(self, record=False, out_adr=None):
         self.cap = CameraCapture1()
-        self.ret, self.frame = self.cap.read()
-        self.tac_img_size = (960, 720)
-        self.init_frame = gs.resize_crop_mini(self.frame, self.tac_img_size[0], self.tac_img_size[1])
+        self.record = record
+        self.out_adr = out_adr
+        if self.record and self.out_adr is not None:
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            self.out = cv2.VideoWriter(self.out_adr, fourcc, 15.0, (640, 480))
+        ret, f0 = self.cap.read()
+        self.tac_img_size = (640, 480)
+
+        
+        self.init_frame = gs.resize_crop_mini(f0, self.tac_img_size[0], self.tac_img_size[1])
+        f0gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
         self.MarkerI = gs.find_markers(self.init_frame)
         self.Ox = self.MarkerI[:, 0]
         self.Oy = self.MarkerI[:, 1]
         self.nct = len(self.MarkerI)
-        self.old_gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
-        self.lk_params = dict(winSize=(150, 150), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
+        self.old_gray = f0gray.copy()
+        self.lk_params = dict(winSize=(50, 50), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
         self.color = np.random.randint(0, 255, (100, 3))
+
         self.p0 = np.array([[self.Ox[0], self.Oy[0]]], np.float32).reshape(-1, 1, 2)
         for i in range(self.nct - 1):
             new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
             self.p0 = np.append(self.p0, new_point, axis=0)
         self.is_running = True
-        self.color = np.random.randint(0, 255, (100, 3))
+
         thread = threading.Thread(target=self.update, args=())
         thread.daemon = True
         thread.start()
-        rospy.sleep(1)
+       
         self.new = False
     def update(self):
+         
         while self.is_running:
             self.ret, frame = self.cap.read()
             frame = gs.resize_crop_mini(frame, self.tac_img_size[0], self.tac_img_size[1])
@@ -149,13 +160,15 @@ class OpFlowTracker:
             good_new = p1[st == 1]
             good_old = self.p0[st == 1]
             self.p0 = good_new.reshape(-1, 1, 2)
+
             for i, (new, old) in enumerate(zip(good_new, good_old)):
                 a, b = new.ravel()
                 ix  = int(self.Ox[i])
                 iy  = int(self.Oy[i])
                 offrame = cv2.arrowedLine(frame, (ix,iy), (int(a), int(b)), (255,255,255), thickness=1, line_type=cv2.LINE_8, tipLength=.15)
                 offrame = cv2.circle(offrame, (int(a), int(b)), 5, self.color[i].tolist(), -1)
-            self.average_movement = np.mean(np.sqrt((good_new[:,0] - good_old[:,0])**2 + (good_new[:,1] - good_old[:,1])**2))
+            if self.record and self.out_adr is not None:
+                self.out.write(offrame)
             
             # print(offrame.shape)
             self.return_frame = offrame.copy()
@@ -167,16 +180,35 @@ class OpFlowTracker:
             continue
         self.new = False
         return self.return_frame, self.frame
-    def move(self):
-       return self.average_movement
+    def set_init_frame(self):
+        self.init_frame = self.frame
+        self.MarkerI = gs.find_markers(self.init_frame)
+        self.Ox = self.MarkerI[:, 0]
+        self.Oy = self.MarkerI[:, 1]
+        self.nct = len(self.MarkerI)
+        self.old_gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
+        self.p0 = np.array([[self.Ox[0], self.Oy[0]]], np.float32).reshape(-1, 1, 2)
+        for i in range(self.nct - 1):
+            new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
+            self.p0 = np.append(self.p0, new_point, axis=0)
+    def start_record(self, out_adr):
+        self.record = True
+        if out_adr is not None:
+           self.out_adr = out_adr 
+        if self.out_adr is not None:
+          fourcc = cv2.VideoWriter_fourcc(*'XVID')
+          self.out = cv2.VideoWriter(self.out_adr, fourcc, 15.0, (640, 480))
+       
     def release(self):
         self.is_running = False
         rospy.sleep(1)
         self.cap.release()
+        if self.record:
+            self.out.release()
 
 class Grasp(object):
-  def __init__(self):
-    self.tracker = OpFlowTracker()
+  def __init__(self, record=False):
+    
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
     self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
     self.start_loc = np.array([0.08, 0.6, 0.25])
@@ -190,7 +222,7 @@ class Grasp(object):
     self.start_mat = np.zeros((3,4))
     self.start_mat[:3,:3] = self.start_rot
     self.start_mat[:3,3] = self.start_loc
-    self.tac_img_size = self.tracker.tac_img_size
+    
     # States
     self.joint_state = None
     self.gripper_width = None
@@ -215,6 +247,10 @@ class Grasp(object):
         os.makedirs(self.saving_adr)
     exp_run = len([name for name in os.listdir(self.saving_adr) ]) + 1
     self.saving_adr = self.saving_adr + 'run' + str(exp_run) + '/'
+    if not os.path.exists(self.saving_adr):
+        os.makedirs(self.saving_adr)
+    self.tracker = OpFlowTracker(record, self.saving_adr + 'opflow.avi')
+    self.tac_img_size = self.tracker.tac_img_size
     
   def __del__(self):
     self.tracker.release()
@@ -367,16 +403,18 @@ class Grasp(object):
     # gripper.homing()
     # print(self.joint_state)
     # print(inverse_kinematic(self.joint_state, self.start_loc, self.start_rot))
-    self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess = self.joint_state), 10)
+    self.move_to_joint(self.reset_joint, 10)
+    rospy.sleep(10)
+    self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 10)
     rospy.sleep(10)
     gripper.homing()
 
-  def save_np_data(self, force, movement, pos_num):
+  def save_np_data(self, force, pos_num):
     save_adr = self.saving_adr + 'raw_data/'+ str(pos_num) + '/'
     if not os.path.exists(save_adr):
         os.makedirs(save_adr)
     np.save(save_adr + 'force' + str(pos_num) + '.npy', np.array(force))
-    np.save(save_adr + 'movement' + str(pos_num) + '.npy', np.array(movement))
+    # np.save(save_adr + 'movement' + str(pos_num) + '.npy', np.array(movement))
 
   def save_raw_data(self, img, num_pos):
         save_adr = self.saving_adr + 'raw_data/'+ str(num_pos) + '/'
@@ -391,23 +429,19 @@ class Grasp(object):
     self.pickup()
     frame, og_frame = self.tracker.get()
     self.save_raw_data(og_frame, 0)
-    fourcc = cv2.VideoWriter_fourcc(*'XVID')
-    index = len([name for name in os.listdir(self.saving_adr) if os.path.isfile(os.path.join(self.saving_adr, name))] ) + 1
-    out = cv2.VideoWriter(self.saving_adr + 'output' + str(index) + '.avi', fourcc, 15.0, self.tac_img_size)
+  
     self.random_rotate()
     count = 1
     pos_num = 1
     forces = []
-    movement = []
+
 
     while pos_num<5:
         forces.append(self.gripper_force)
         frame, og_frame = self.tracker.get()
-        movement.append(self.tracker.move())
-        out.write(frame)
         self.save_raw_data(og_frame, pos_num)
         if count == 30:
-            self.save_np_data(forces, movement, pos_num)
+            self.save_np_data(forces, pos_num)
             forces = []
             movement = []
             self.random_rotate()
@@ -417,7 +451,6 @@ class Grasp(object):
         # cv2.imshow('frame', frame)
         count += 1
         # print(count)
-    out.release()
     self.reset()
   def generate_random_pos(self):
     
@@ -478,7 +511,7 @@ if __name__ == '__main__':
   rospy.init_node('grasp')
   rospy.sleep(1)
   np.random.seed(42)
-  Grasp_ = Grasp()
+  Grasp_ = Grasp(record=True)
   
 #   Grasp_.test2()
 #   print(forward_kinematic(Grasp_.joint_state))

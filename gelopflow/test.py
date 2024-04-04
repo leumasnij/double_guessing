@@ -42,7 +42,7 @@ if __name__ == '__main__':
     Oy = marker_centers[:, 1]
     nct = len(marker_centers)
 
-    lk_params = dict(winSize=(50, 50), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+    lk_params = dict(winSize=(50, 50), maxLevel=1, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     color = np.random.randint(0, 255, (100, 3))
     old_gray = f0gray.copy()
 
@@ -86,7 +86,7 @@ if __name__ == '__main__':
             if len(A_mat) != 0:
                 A_mat = np.array(A_mat)
                 b_mat = np.array(b_mat)
-                ROC = np.linalg.inv(A_mat.T@A_mat)@A_mat.T@b_mat
+                ROC = np.linalg.inv(np.dot(A_mat.T, A_mat)).dot(A_mat.T).dot(b_mat)
                 print(ROC)
                 offrame = cv2.circle(offrame, (int(ROC[0]), int(ROC[1])), 5, (0, 255, 0), -1)
                 # cv2.putText(offrame, 'Rotate', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1, cv2.LINE_AA)
