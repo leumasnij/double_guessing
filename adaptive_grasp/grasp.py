@@ -21,55 +21,37 @@ import math
 import numpy as np
 from kinematic import forward_kinematic, inverse_kinematic, inverse_kinematic_orientation
 
-def rotationMatrixToEulerAngles(R) :
- 
-    sy = math.sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
- 
-    singular = sy < 1e-6
- 
-    if  not singular :
-        x = math.atan2(R[2,1] , R[2,2])
-        y = math.atan2(-R[2,0], sy)
-        z = math.atan2(R[1,0], R[0,0])
-    else :
-        x = math.atan2(-R[1,2], R[1,1])
-        y = math.atan2(-R[2,0], sy)
-        z = 0
- 
-    return np.array([x, y, z])
-
-def euler_to_quaternion(roll, pitch, yaw):
-
-    c1 = np.cos(yaw / 2)
-    c2 = np.cos(pitch / 2)
-    c3 = np.cos(roll / 2)
-    s1 = np.sin(yaw / 2)
-    s2 = np.sin(pitch / 2)
-    s3 = np.sin(roll / 2)
-    
-    w = c1*c2*c3 - s1*s2*s3
-    x = s1*s2*c3 + c1*c2*s3
-    y = s1*c2*c3 + c1*s2*s3
-    z = c1*s2*c3 - s1*c2*s3
-    
-    return np.array([w, x, y, z])
 
 class CameraCapture1:
     def __init__(self):
         self.cap = cv2.VideoCapture(0)
         self.ret, self.frame = self.cap.read()
         self.is_running = True
+        self.record = False
         thread = threading.Thread(target=self.update, args=())
         thread.daemon = True
         thread.start()
-        
 
     def update(self):
         while self.is_running:
             self.ret, self.frame = self.cap.read()
+            while not self.ret:
+               self.ret, self.frame = self.cap.read()
+            if self.record:
+                self.out.write(self.frame)
 
     def read(self):
-        return self.ret, self.frame
+        return self.ret, self.frame.copy()
+    def start_record(self, out_adr):
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        self.out = cv2.VideoWriter(out_adr, fourcc, 15.0, self.frame.shape[1::-1])
+        self.record = True
+
+    def end_record(self):
+        self.record = False
+        rospy.sleep(1)
+        if self.out.isOpened():
+           self.out.release()
 
     def release(self):
         self.is_running = False
@@ -109,6 +91,11 @@ class MarkerTracker:
         return self.return_frame, self.frame
     def move(self):
        return self.average_movement
+    
+    def start_record(self, out_adr):
+        self.cap.start_record(out_adr)
+    def end_record(self):
+        self.cap.end_record()
     def release(self):
         self.is_running = False
         rospy.sleep(1)
@@ -192,13 +179,9 @@ class OpFlowTracker:
             new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
             self.p0 = np.append(self.p0, new_point, axis=0)
     def start_record(self, out_adr):
-        self.record = True
-        if out_adr is not None:
-           self.out_adr = out_adr 
-        if self.out_adr is not None:
-          fourcc = cv2.VideoWriter_fourcc(*'XVID')
-          self.out = cv2.VideoWriter(self.out_adr, fourcc, 15.0, (640, 480))
-       
+        self.cap.start_record(out_adr)
+    def end_record(self):
+        self.cap.end_record()
     def release(self):
         self.is_running = False
         rospy.sleep(1)
@@ -215,7 +198,7 @@ class Grasp(object):
     self.start_yaw = -np.pi/2
     self.start_pitch = 2e-3
     self.start_roll = np.pi
-    self.q_array = euler_to_quaternion(self.start_roll, self.start_pitch, self.start_yaw)
+    # self.q_array = euler_to_quaternion(self.start_roll, self.start_pitch, self.start_yaw)
     self.start_rot = np.array([[np.cos(self.start_yaw)*np.cos(self.start_pitch), np.cos(self.start_yaw)*np.sin(self.start_pitch)*np.sin(self.start_roll)-np.sin(self.start_yaw)*np.cos(self.start_roll), np.cos(self.start_yaw)*np.sin(self.start_pitch)*np.cos(self.start_roll)+np.sin(self.start_yaw)*np.sin(self.start_roll)],
                                [np.sin(self.start_yaw)*np.cos(self.start_pitch), np.sin(self.start_yaw)*np.sin(self.start_pitch)*np.sin(self.start_roll)+np.cos(self.start_yaw)*np.cos(self.start_roll), np.sin(self.start_yaw)*np.sin(self.start_pitch)*np.cos(self.start_roll)-np.cos(self.start_yaw)*np.sin(self.start_roll)],
                                [-np.sin(self.start_pitch), np.cos(self.start_pitch)*np.sin(self.start_roll), np.cos(self.start_pitch)*np.cos(self.start_roll)]])
@@ -249,8 +232,8 @@ class Grasp(object):
     self.saving_adr = self.saving_adr + 'run' + str(exp_run) + '/'
     if not os.path.exists(self.saving_adr):
         os.makedirs(self.saving_adr)
-    self.tracker = OpFlowTracker(record, self.saving_adr + 'opflow.avi')
-    self.tac_img_size = self.tracker.tac_img_size
+    self.tracker = CameraCapture1()
+    # self.tac_img_size = self.tracker.tac_img_size
     
   def __del__(self):
     self.tracker.release()
@@ -313,12 +296,13 @@ class Grasp(object):
 
     rospy.sleep(1)
     target_width = 100
-    while self.gripper_force < 10 and target_width > 5:
+    while self.gripper_force < 10 and target_width >=0:
       rospy.sleep(0.1)
       gripper.grasp(target_width, 20)
     #   rospy.sleep(0.1)
     #   print(self.gripper_force, self.gripper_width)
       target_width -= 20
+    gripper.set_force(10)
 
   def random_rotate(self):
     # np.random.seed(0)
@@ -327,7 +311,7 @@ class Grasp(object):
     rand_ang = np.random.uniform(-np.pi/2, np.pi/2)
     new_state[-1] = ref_ang + rand_ang
     self.move_to_joint(new_state, 10)
-    rospy.sleep(10)
+    rospy.sleep(15)
 
   def test_rot(self):
      roll = np.random.uniform(3*np.pi/4, 5*np.pi/4)
@@ -396,8 +380,6 @@ class Grasp(object):
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-
-
   def reset(self):
     rospy.sleep(1)
     # gripper.homing()
@@ -427,33 +409,60 @@ class Grasp(object):
     if not os.path.exists(self.saving_adr):
         os.makedirs(self.saving_adr)
     self.pickup()
-    frame, og_frame = self.tracker.get()
-    self.save_raw_data(og_frame, 0)
+    # frame, og_frame = self.tracker.get()
+    # self.save_raw_data(og_frame, 0)
   
-    self.random_rotate()
-    count = 1
+    # self.random_rotate()
+    # count = 30
     pos_num = 1
     forces = []
-
-
-    while pos_num<5:
+    while pos_num<=10:
         forces.append(self.gripper_force)
-        frame, og_frame = self.tracker.get()
-        self.save_raw_data(og_frame, pos_num)
-        if count == 30:
-            self.save_np_data(forces, pos_num)
-            forces = []
-            movement = []
-            self.random_rotate()
-            count = 1
-            pos_num += 1
-            continue
+        # frame, og_frame = self.tracker.get()
+        # self.save_raw_data(og_frame, pos_num)
+        # if count == 30:
+            # self.save_np_data(forces, pos_num)
+            # forces = []
+            # movement = []
+        self.random_rotate()
+       
+        self.test_motion(pos_num  )
+       
+        # count = 1
+        pos_num += 1
+        continue
         # cv2.imshow('frame', frame)
-        count += 1
+        # count += 1
         # print(count)
     self.reset()
+
+  def test_motion(self, pos_num):
+      CurPos = self.ur5e_arm.forward(self.joint_state)
+      print(CurPos)
+      NewPos = CurPos.copy()
+      if(NewPos[2] > 0.5):
+        NewPos[2] -= 0.1
+      else:
+        NewPos[2] += 0.1
+      if(NewPos[1] > 0.5):
+        NewPos[1] -= 0.1
+      else:
+        NewPos[1] += 0.1
+      if(NewPos[0] > 0.5):
+        NewPos[0] -= 0.1
+      else:
+        NewPos[0] += 0.1
+      self.tracker.start_record(self.saving_adr + 'pos' + str(pos_num) + '.avi')
+      new_state = self.ur5e_arm.inverse(NewPos, False, q_guess=self.joint_state)
+      self.move_to_joint(new_state, 1)
+      rospy.sleep(1.5)
+      ori_state = self.ur5e_arm.inverse(CurPos, False, q_guess=self.joint_state)
+      self.move_to_joint(ori_state, 1)
+      rospy.sleep(1.5)
+      self.tracker.end_record()
+      print('done')
+
   def generate_random_pos(self):
-    
     
     position = np.array([0.08, 0.6, 0.40])
     roll = np.pi
@@ -471,7 +480,7 @@ class Grasp(object):
     new_state = self.ur5e_arm.inverse(new_mat, False, q_guess=self.joint_state)
     if new_state is None:
       return self.generate_random_pos()
-    print(self.ur5e_arm.forward(new_state))
+    # print(self.ur5e_arm.forward(new_state))
     ref_ang, _ = forward_kinematic(new_state)
     another_state = inverse_kinematic_orientation(self.joint_state, position, ref_ang)
     _, pos = forward_kinematic(another_state)
@@ -511,7 +520,7 @@ if __name__ == '__main__':
   rospy.init_node('grasp')
   rospy.sleep(1)
   np.random.seed(42)
-  Grasp_ = Grasp(record=True)
+  Grasp_ = Grasp(record=False)
   
 #   Grasp_.test2()
 #   print(forward_kinematic(Grasp_.joint_state))
