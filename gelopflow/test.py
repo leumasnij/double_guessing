@@ -1,5 +1,4 @@
 import cv2
-from markertracker import MarkerTracker
 import threading
 import numpy as np
 import gelsight_test as gs
@@ -44,7 +43,8 @@ if __name__ == '__main__':
 
     lk_params = dict(winSize=(50, 50), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
     color = np.random.randint(0, 255, (100, 3))
-    old_gray = f0gray.copy()
+    # old_gray = f0gray.copy()
+    old_gray = f0.copy()
 
     # Existing p0 array
     p0 = np.array([[Ox[0], Oy[0]]], np.float32).reshape(-1, 1, 2)
@@ -56,7 +56,8 @@ if __name__ == '__main__':
     while True:
         ret, frame = camera.read()
         frame = gs.resize_crop_mini(frame, imgw, imgh)
-        cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        cur_gray = frame.copy()
         if ret:
        
             p1, st, err = cv2.calcOpticalFlowPyrLK(old_gray, cur_gray, p0, None, **lk_params)
@@ -72,30 +73,22 @@ if __name__ == '__main__':
                 a, b = new.ravel()
                 ix  = int(Ox[i])
                 iy  = int(Oy[i])
-                if np.linalg.norm([a - ix, b - iy]) > 10:
-                    temp = (iy - b)/(ix - a)
-                    A_mat.append([1, (iy - b)/(ix - a)])
-                    mx = (a + ix)/2
-                    my = (b + iy)/2
-                    b_mat.append([mx + my*(iy - b)/(ix - a)])
-                    Mid.append([mx, my])
-                    half_length.append(np.linalg.norm([a - ix, b - iy])/2)
-                offrame = cv2.arrowedLine(frame, (ix,iy), (int(a), int(b)), (255,255,255), thickness=1, line_type=cv2.LINE_8, tipLength=.15)
-                offrame = cv2.circle(offrame, (int(a), int(b)), 5, color[i].tolist(), -1)
+                offrame = cv2.arrowedLine(frame, (ix,iy), (int(a), int(b)), (255,255,255), thickness=2, line_type=cv2.LINE_8, tipLength=.25)
+                offrame = cv2.circle(offrame, (int(a), int(b)), 10, color[i].tolist(), -1)
 
-            if len(A_mat) != 0:
-                A_mat = np.array(A_mat)
-                b_mat = np.array(b_mat)
-                ROC = np.linalg.inv(A_mat.T@A_mat)@A_mat.T@b_mat
-                print(ROC)
-                offrame = cv2.circle(offrame, (int(ROC[0]), int(ROC[1])), 5, (0, 255, 0), -1)
-                # cv2.putText(offrame, 'Rotate', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1, cv2.LINE_AA)
-                angle = 0
-                for i in range(len(Mid)):
-                    angle += (np.arctan((half_length[i])/(np.linalg.norm(Mid[i] - ROC)))*180/np.pi)*2
-                    offrame = cv2.line(offrame, (int(Mid[i][0]), int(Mid[i][1])), (int(ROC[0]), int(ROC[1])), (0, 255, 0), 1)
-                angle = angle/len(Mid)
-                cv2.putText(offrame, 'Angle: ' + str(angle), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+            # if len(A_mat) != 0:
+            #     A_mat = np.array(A_mat)
+            #     b_mat = np.array(b_mat)
+            #     ROC = np.linalg.inv(A_mat.T@A_mat)@A_mat.T@b_mat
+            #     # print(ROC)
+            #     offrame = cv2.circle(offrame, (int(ROC[0]), int(ROC[1])), 5, (0, 255, 0), -1)
+            #     cv2.putText(offrame, 'Rotate', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1, cv2.LINE_AA)
+            #     angle = 0
+            #     for i in range(len(Mid)):
+            #         angle += (np.arctan((half_length[i])/(np.linalg.norm(Mid[i] - ROC)))*180/np.pi)*2
+            #         offrame = cv2.line(offrame, (int(Mid[i][0]), int(Mid[i][1])), (int(ROC[0]), int(ROC[1])), (0, 255, 0), 1)
+            #     angle = angle/len(Mid)
+            #     cv2.putText(offrame, 'Angle: ' + str(angle), (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
             # offrame = cv2.circle(offrame, (int(ROC[0]), int(ROC[1])), 5, (0, 255, 0), -1)
 
             # cv2.putText(offrame, 'Average Movement: ' + str(movemnt), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 1, cv2.LINE_AA)
@@ -105,7 +98,16 @@ if __name__ == '__main__':
             f0 = frame.copy()
             old_gray = cur_gray.copy()
             # print('frame')
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            if cv2.waitKey(1) & 0xFF == ord('s'):
+                marker_centers = gs.find_markers(f0)
+                Ox = marker_centers[:, 0]
+                Oy = marker_centers[:, 1]
+                nct = len(marker_centers)
+                p0 = np.array([[Ox[0], Oy[0]]], np.float32).reshape(-1, 1, 2)
+                for i in range(nct - 1):
+                    # New point to be added
+                    new_point = np.array([[Ox[i+1], Oy[i+1]]], np.float32).reshape(-1, 1, 2)
+                    # Append new point to p0
+                    p0 = np.append(p0, new_point, axis=0)
     camera.release()
     cv2.destroyAllWindows()
