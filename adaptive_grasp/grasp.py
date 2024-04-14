@@ -194,7 +194,7 @@ class Grasp(object):
     
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
     self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
-    self.start_loc = np.array([0.08, 0.6, 0.25])
+    self.start_loc = np.array([0.08, 0.6, 0.31])
     self.start_yaw = -np.pi/2
     self.start_pitch = 2e-3
     self.start_roll = np.pi
@@ -292,17 +292,20 @@ class Grasp(object):
     pos_message_point.time_from_start = rospy.Duration(time)
     pos_message.points.append(pos_message_point)
     self.pos_controller.publish(pos_message)
-  def grasp_part(self):
 
+  def grasp_part(self):
+    gripper.set_force(60)
     rospy.sleep(1)
     target_width = 100
     while self.gripper_force < 10 and target_width >=0:
       rospy.sleep(0.1)
-      gripper.grasp(target_width, 20)
+      gripper.grasp(target_width, 60)
     #   rospy.sleep(0.1)
     #   print(self.gripper_force, self.gripper_width)
       target_width -= 20
-    gripper.set_force(10)
+    # gripper.set_force(60)
+    gripper.move(80.0, 60)
+
 
   def random_rotate(self):
     # np.random.seed(0)
@@ -505,13 +508,23 @@ class Grasp(object):
     # # rospy.sleep(15)
     # self.move_to_joint(self.reset_joint, 15)
     # rospy.sleep(15)
+  def impluse_motion(self, direction, time):
+    """ Impluse motion. """
+    cur_pos = self.ur5e_arm.forward(self.joint_state)
+    new_pos = cur_pos.copy()
+    new_pos[0] += direction[0]
+    new_pos[1] += direction[1]
+    new_pos[2] += direction[2]
+    new_state = self.ur5e_arm.inverse(new_pos, False, q_guess=self.joint_state)
+    self.move_to_joint(new_state, time)
+    rospy.sleep(time)
+
+
   def test2(self):
-    for i in range(10):
-      self.random_rotate()
-      rospy.sleep(5)
-    self.move_to_joint(self.reset_joint, 10)
-    rospy.sleep(10)
-     
+    self.pickup()
+    rospy.sleep(1)
+    self.impluse_motion([0, 0, 0.1], 0.2)
+    self.reset()
 
 
 
@@ -530,5 +543,6 @@ if __name__ == '__main__':
   # Grasp_.showcamera()
   # Grasp_.reset()
 #   Grasp_.test_rot()
-  Grasp_.test()
+  # Grasp_.test()
+  Grasp_.test2()
   
