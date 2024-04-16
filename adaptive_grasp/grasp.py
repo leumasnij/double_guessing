@@ -44,7 +44,7 @@ class CameraCapture1:
         return self.ret, self.frame.copy()
     def start_record(self, out_adr):
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        self.out = cv2.VideoWriter(out_adr, fourcc, 15.0, self.frame.shape[1::-1])
+        self.out = cv2.VideoWriter(out_adr, fourcc, 10.0, self.frame.shape[1::-1])
         self.record = True
 
     def end_record(self):
@@ -195,7 +195,7 @@ class Grasp(object):
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
     self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
     self.start_loc = np.array([0.08, 0.6, 0.31])
-    self.start_yaw = -np.pi/2
+    self.start_yaw = -np.pi/2 
     self.start_pitch = 2e-3
     self.start_roll = np.pi
     # self.q_array = euler_to_quaternion(self.start_roll, self.start_pitch, self.start_yaw)
@@ -293,18 +293,18 @@ class Grasp(object):
     pos_message.points.append(pos_message_point)
     self.pos_controller.publish(pos_message)
 
-  def grasp_part(self):
-    gripper.set_force(60)
+  def grasp_part(self, force):
+    gripper.set_force(force)
     rospy.sleep(1)
     target_width = 100
-    while self.gripper_force < 10 and target_width >=0:
+    while self.gripper_force < 5 and target_width >=0:
       rospy.sleep(0.1)
       gripper.grasp(target_width, 60)
     #   rospy.sleep(0.1)
     #   print(self.gripper_force, self.gripper_width)
       target_width -= 20
     # gripper.set_force(60)
-    gripper.move(80.0, 60)
+    # gripper.move(80.0, 60)
 
 
   def random_rotate(self):
@@ -330,7 +330,7 @@ class Grasp(object):
 
     #  self.move_to_joint(new_state, 10)
     #  rospy.sleep(10)
-  def pickup(self):
+  def pickup(self, force = 20):
     """ Pickup the object. """
     # rospy.sleep(1)
     gripper.homing()
@@ -340,11 +340,11 @@ class Grasp(object):
     self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 2)
     rospy.sleep(2)
 
-    self.grasp_part()
+    self.grasp_part(force)
     up_mat = self.start_mat.copy()
     up_mat[2,3] += 0.2
-    self.move_to_joint(self.ur5e_arm.inverse(up_mat, False, q_guess=self.joint_state))
-    rospy.sleep(2)
+    self.move_to_joint(self.ur5e_arm.inverse(up_mat, False, q_guess=self.joint_state), 5)
+    rospy.sleep(5)
 
     # cap.release()
     # cv2.destroyAllWindows()
@@ -388,10 +388,10 @@ class Grasp(object):
     # gripper.homing()
     # print(self.joint_state)
     # print(inverse_kinematic(self.joint_state, self.start_loc, self.start_rot))
-    self.move_to_joint(self.reset_joint, 10)
-    rospy.sleep(10)
-    self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 10)
-    rospy.sleep(10)
+    self.move_to_joint(self.reset_joint, 5)
+    rospy.sleep(5)
+    self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 5)
+    rospy.sleep(5)
     gripper.homing()
 
   def save_np_data(self, force, pos_num):
@@ -484,6 +484,7 @@ class Grasp(object):
     if new_state is None:
       return self.generate_random_pos()
     # print(self.ur5e_arm.forward(new_state))
+    
     ref_ang, _ = forward_kinematic(new_state)
     another_state = inverse_kinematic_orientation(self.joint_state, position, ref_ang)
     _, pos = forward_kinematic(another_state)
@@ -519,11 +520,43 @@ class Grasp(object):
     self.move_to_joint(new_state, time)
     rospy.sleep(time)
 
+  def rotate_to(self, roll, pitch, yaw):
+    cur_pos = self.ur5e_arm.forward(self.joint_state, 'matrix')
+    rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
+                    [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
+                    [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
+    cur_pos[:3,:3] = rot
+    new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=self.joint_state)
+    ref_ang, ref_pos = forward_kinematic(new_state)
+    another_state = inverse_kinematic_orientation(self.joint_state, ref_pos, ref_ang)
+    _, pos = forward_kinematic(another_state)
+    pos[0] = pos[0] *-1
+    pos[1] = pos[1] *-1
+    another_mat = np.zeros((3,4))
+    another_mat[:3,:3] = rot
+    another_mat[:3,3] = pos
+    another_state = self.ur5e_arm.inverse(another_mat, False, q_guess=self.joint_state)
+    another_state[-1] = self.joint_state[-1] + np.pi/2 + 0.3
+    self.move_to_joint(another_state, 20)
+    rospy.sleep(20)
 
   def test2(self):
-    self.pickup()
+    self.start_roll = np.pi
+    self.start_pitch = 2e-3
+    self.start_yaw = -np.pi/2
+    
+    
+    self.pickup(20)
+    self.tracker.start_record(self.saving_adr + 'pos' + str(0) + '.avi')
     rospy.sleep(1)
-    self.impluse_motion([0, 0, 0.1], 0.2)
+    # self.rotate_to(np.pi, np.pi/2, -np.pi/2)
+    # rospy.sleep(5)
+    self.impluse_motion([0, 0, 0.1], 0.25)
+    rospy.sleep(5)
+    # self.impluse_motion([0, 0, -0.1], 0.1)
+    
+    # rospy.sleep(5)
+    self.tracker.end_record()
     self.reset()
 
 
