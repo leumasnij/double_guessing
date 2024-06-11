@@ -13,7 +13,6 @@ from std_msgs.msg import Float32
 from wsg_50_common.msg import Status, Cmd
 from scipy.interpolate import interp1d
 from scipy import interpolate
-from kinematic import forward_kinematic, inverse_kinematic, inverse_kinematic_orientation
 import gelsight_test as gs
 import threading
 from ur_ikfast import ur_kinematics
@@ -194,8 +193,9 @@ class Grasp(object):
     
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
     self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
-    self.start_loc = np.array([0.08, 0.6, 0.31])
-    self.start_yaw = -np.pi/2 
+    self.start_loc = np.array([0.08, 0.6, 0.2275])
+    # self.start_yaw = -np.pi/2 
+    self.start_yaw = 2e-3
     self.start_pitch = 2e-3
     self.start_roll = np.pi
     # self.q_array = euler_to_quaternion(self.start_roll, self.start_pitch, self.start_yaw)
@@ -210,14 +210,18 @@ class Grasp(object):
     self.joint_state = None
     self.gripper_width = None
     self.gripper_force = None
+    self.force_calibrated = False
     # Data
     self.stamped_haptic_data = []
     self.stamped_weight_data = []
     self.stamped_gripper_data = []
     self.stamped_force_data = []
+    self.ftwindow = []
     rospy.Subscriber('/joint_states', JointState, self.cb_joint_states)
     # rospy.Subscriber('/weight', Float32, self.cb_weight)
     rospy.Subscriber('/wsg_50_driver/status', Status, self.cb_gripper)
+    rospy.Subscriber('/wrench', WrenchStamped, self.cb_force_torque)
+    rospy.sleep(1)
     # Publishers
     self.pos_controller = rospy.Publisher('/scaled_pos_joint_traj_controller/command',
                                           JointTrajectory, queue_size=20)
@@ -230,8 +234,6 @@ class Grasp(object):
         os.makedirs(self.saving_adr)
     exp_run = len([name for name in os.listdir(self.saving_adr) ]) + 1
     self.saving_adr = self.saving_adr + 'run' + str(exp_run) + '/'
-    if not os.path.exists(self.saving_adr):
-        os.makedirs(self.saving_adr)
     self.tracker = CameraCapture1()
     # self.tac_img_size = self.tracker.tac_img_size
     
@@ -256,31 +258,29 @@ class Grasp(object):
     # print(msg)
     self.gripper_width = msg.width
     self.gripper_force = msg.force
+
   def cb_force_torque(self, msg):
     """ Force Torque data callback. """
-    
-    self.force_torque = [msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
-                  msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z]
-    if self.offset != []:
-      for i in range(6):
-        self.force_torque[i] = self.force_torque[i] - self.offset[i]
-      
-    self.force_torque_cache.append(self.force_torque)
-    if len(self.force_torque_cache) > 30:
-      self.force_torque_cache = self.force_torque_cache[-30:]
-    self.force_torque_avg = np.mean(self.force_torque_cache, axis=0)
-        
-    if not self.start_recording:
-      return
+       
+    self.force_torque = np.array([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
+                  msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
+    if len(self.ftwindow) < 15:
+        self.ftwindow.append(self.force_torque)
+        return
+    self.ftwindow.pop(0)
+    self.ftwindow.append(self.force_torque)
+    self.force_torque = np.mean(self.ftwindow, axis=0)
+    if self.force_calibrated == False:
+        self.cali_force(self.force_torque)
+    else:
+        self.force_torque -= self.force_offset
 
-    self.force_x = msg.wrench.force.x
     
-    time = msg.header.stamp.secs + 1e-9 * msg.header.stamp.nsecs
+  def cali_force(self, force):
+     if not self.force_calibrated:
+        self.force_calibrated = True
+        self.force_offset = force
     
-    self.force_torque_stamped_datas.append(
-        (time, self.force_torque))
-
-    self.fr_list.append(np.sqrt(self.force_torque[0]**2 + self.force_torque[1]**2))
 
   def move_to_joint(self, joint_space_goal, time = 2.0):
     """ Move to joint state. """
@@ -296,7 +296,7 @@ class Grasp(object):
   def grasp_part(self, force):
     gripper.set_force(force)
     rospy.sleep(1)
-    target_width = 100
+    target_width = 90
     while self.gripper_force < 5 and target_width >=0:
       rospy.sleep(0.1)
       gripper.grasp(target_width, 60)
@@ -304,7 +304,8 @@ class Grasp(object):
     #   print(self.gripper_force, self.gripper_width)
       target_width -= 20
     # gripper.set_force(60)
-    # gripper.move(80.0, 60)
+    rospy.sleep(1)
+    gripper.grasp(self.gripper_width, 60)
 
 
   def random_rotate(self):
@@ -341,11 +342,13 @@ class Grasp(object):
     rospy.sleep(2)
 
     self.grasp_part(force)
+    rospy.sleep(2)
+    return_ft = self.force_torque
     up_mat = self.start_mat.copy()
     up_mat[2,3] += 0.2
     self.move_to_joint(self.ur5e_arm.inverse(up_mat, False, q_guess=self.joint_state), 5)
     rospy.sleep(5)
-
+    return return_ft  
     # cap.release()
     # cv2.destroyAllWindows()
     # self.reset()
@@ -511,16 +514,13 @@ class Grasp(object):
     # rospy.sleep(15)
   def impluse_motion(self, direction, time):
     """ Impluse motion. """
-    cur_pos = self.ur5e_arm.forward(self.joint_state)
-    new_pos = cur_pos.copy()
-    new_pos[0] += direction[0]
-    new_pos[1] += direction[1]
-    new_pos[2] += direction[2]
-    new_state = self.ur5e_arm.inverse(new_pos, False, q_guess=self.joint_state)
+    cur_ang, cur_pos = forward_kinematic(self.joint_state)
+    new_pos = cur_pos + direction
+    new_state = inverse_kinematic(self.joint_state, new_pos[:3], cur_ang)
     self.move_to_joint(new_state, time)
     rospy.sleep(time)
 
-  def rotate_to(self, roll, pitch, yaw):
+  def rotate_to(self, roll, pitch, yaw, inhand):
     cur_pos = self.ur5e_arm.forward(self.joint_state, 'matrix')
     rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
                     [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
@@ -532,11 +532,17 @@ class Grasp(object):
     _, pos = forward_kinematic(another_state)
     pos[0] = pos[0] *-1
     pos[1] = pos[1] *-1
+    if pos[2] > 0.5:
+      pos[2] = 0.5
+    if pos[0] > 0.1:
+      pos[0] = 0.1
+    if pos[1] > 0.5:
+      pos[1] = 0.5
     another_mat = np.zeros((3,4))
     another_mat[:3,:3] = rot
     another_mat[:3,3] = pos
     another_state = self.ur5e_arm.inverse(another_mat, False, q_guess=self.joint_state)
-    another_state[-1] = self.joint_state[-1] + np.pi/2 + 0.3
+    another_state[-1] = self.joint_state[-1] + inhand + 0.3
     self.move_to_joint(another_state, 20)
     rospy.sleep(20)
 
@@ -546,18 +552,34 @@ class Grasp(object):
     self.start_yaw = -np.pi/2
     
     
-    self.pickup(20)
-    self.tracker.start_record(self.saving_adr + 'pos' + str(0) + '.avi')
+    # self.pickup(3.5)
+    self.pickup(75)
     rospy.sleep(1)
-    # self.rotate_to(np.pi, np.pi/2, -np.pi/2)
-    # rospy.sleep(5)
-    self.impluse_motion([0, 0, 0.1], 0.25)
+    self.rotate_to(np.pi, np.pi/2, -np.pi/2, 0)
+    rospy.sleep(5)
+    if not os.path.exists(self.saving_adr):
+        os.makedirs(self.saving_adr)
+    self.tracker.start_record(self.saving_adr + 'pos' + str(0) + '.avi')
+    self.impluse_motion([0.1, 0, 0], 0.15)
     rospy.sleep(5)
     # self.impluse_motion([0, 0, -0.1], 0.1)
     
     # rospy.sleep(5)
     self.tracker.end_record()
     self.reset()
+
+  def ft_test(self):
+    self.reset()
+    # print(self.force_torque)
+    pre_grasp = self.pickup(75)
+    rospy.sleep(2)
+    post_grasp = self.force_torque
+    # print(pre_grasp, post_grasp)
+    print(post_grasp - pre_grasp)
+    total_force = np.linalg.norm(post_grasp[:3] - pre_grasp[:3])
+    print(total_force)
+    self.reset()
+
 
 
 
@@ -567,6 +589,7 @@ if __name__ == '__main__':
   rospy.sleep(1)
   np.random.seed(42)
   Grasp_ = Grasp(record=False)
+
   
 #   Grasp_.test2()
 #   print(forward_kinematic(Grasp_.joint_state))
@@ -575,7 +598,10 @@ if __name__ == '__main__':
 #   print(1)
   # Grasp_.showcamera()
   # Grasp_.reset()
+  for i in range(10):
+    Grasp_.ft_test()
+  # rospy.sleep(2)
 #   Grasp_.test_rot()
   # Grasp_.test()
-  Grasp_.test2()
+  # Grasp_.test2()
   
