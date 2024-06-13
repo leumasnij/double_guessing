@@ -192,8 +192,9 @@ class Grasp(object):
   def __init__(self, record=False):
     
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
-    self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
-    self.start_loc = np.array([0.08, 0.6, 0.2275])
+    # self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
+    self.reset_joint = [ 1.21490335, -1.283166,  1.6231562, -1.910088, -1.567829,  -0.359537]
+    self.start_loc = np.array([0.08, 0.6, 0.245])
     # self.start_yaw = -np.pi/2 
     self.start_yaw = 2e-3
     self.start_pitch = 2e-3
@@ -270,10 +271,10 @@ class Grasp(object):
     self.ftwindow.pop(0)
     self.ftwindow.append(self.force_torque)
     self.force_torque = np.mean(self.ftwindow, axis=0)
-    if self.force_calibrated == False:
-        self.cali_force(self.force_torque)
-    else:
-        self.force_torque -= self.force_offset
+    # if self.force_calibrated == False:
+    #     self.cali_force(self.force_torque)
+    # else:
+    #     self.force_torque -= self.force_offset
 
     
   def cali_force(self, force):
@@ -339,16 +340,16 @@ class Grasp(object):
     # print(inverse_kinematic(self.joint_state, self.start_loc, self.start_rot))
 
     self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 2)
-    rospy.sleep(2)
+    rospy.sleep(7)
 
     self.grasp_part(force)
-    rospy.sleep(2)
-    return_ft = self.force_torque
+    # rospy.sleep(2)
+    
     up_mat = self.start_mat.copy()
     up_mat[2,3] += 0.2
     self.move_to_joint(self.ur5e_arm.inverse(up_mat, False, q_guess=self.joint_state), 5)
     rospy.sleep(5)
-    return return_ft  
+    # return return_ft  
     # cap.release()
     # cv2.destroyAllWindows()
     # self.reset()
@@ -568,19 +569,66 @@ class Grasp(object):
     self.tracker.end_record()
     self.reset()
 
+  def pre_grasp(self, mat):
+    gripper.homing()
+    homing = self.joint_state.copy()
+    self.move_to_joint(self.ur5e_arm.inverse(mat, False, q_guess=self.joint_state), 5)
+    rospy.sleep(10)
+    pre_grasp = self.force_torque
+    self.move_to_joint(homing, 5)
+    rospy.sleep(5)
+    return pre_grasp
+     
+
   def ft_test(self):
-    self.reset()
-    # print(self.force_torque)
-    pre_grasp = self.pickup(75)
-    rospy.sleep(2)
+    gripper.homing()
+    self.move_to_joint(self.reset_joint, 5)
+    rospy.sleep(5)
+    
+    new_rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
+    cur_pos = self.ur5e_arm.forward(self.reset_joint, 'matrix')
+    cur_pos[:3,:3] = new_rot
+    cur_pos[2,3]+= 0.1
+    new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=self.reset_joint)
+
+    pre_grasp = self.pre_grasp(cur_pos)
+    self.pickup(75)
+    self.move_to_joint(new_state, 5)
+    rospy.sleep(10)
     post_grasp = self.force_torque
     # print(pre_grasp, post_grasp)
     print(post_grasp - pre_grasp)
     total_force = np.linalg.norm(post_grasp[:3] - pre_grasp[:3])
     print(total_force)
+    
+    rospy.sleep(5)
     self.reset()
+    return post_grasp - pre_grasp
 
+  def ypr_to_mat(self, yaw, pitch, roll):
+    return np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
+                     [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
+                     [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
+  
+  def loc2mat(self, loc, rot = None):
+    if rot is None:
+        rot = self.start_rot
+    mat = np.zeros((3,4))
+    mat[:3,:3] = rot
+    mat[:3,3] = loc
+    return mat
+  
 
+  def CoM_estimation(self):
+    overall = []
+    for i in range(10):
+      x = self.ft_test()
+      overall.append(x)
+
+    stddv = np.std(overall, axis=0)
+    print('std ' + str(stddv))
+    avg_x = np.mean(overall, axis=0)
+    print('average ' + str(avg_x))
 
 
 
@@ -589,7 +637,8 @@ if __name__ == '__main__':
   rospy.sleep(1)
   np.random.seed(42)
   Grasp_ = Grasp(record=False)
-
+  Grasp_.CoM_estimation()
+  # Grasp_.ft_test()
   
 #   Grasp_.test2()
 #   print(forward_kinematic(Grasp_.joint_state))
@@ -598,8 +647,7 @@ if __name__ == '__main__':
 #   print(1)
   # Grasp_.showcamera()
   # Grasp_.reset()
-  for i in range(10):
-    Grasp_.ft_test()
+  
   # rospy.sleep(2)
 #   Grasp_.test_rot()
   # Grasp_.test()

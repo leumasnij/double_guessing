@@ -17,6 +17,7 @@ import threading
 from ur_ikfast import ur_kinematics
 import math
 import numpy as np
+from apriltag_helper.tag import detect_tag
 
 
 class Grasp(object):
@@ -184,7 +185,12 @@ class Grasp(object):
     rospy.sleep(3)
     gripper.homing()
     self.move_away()
+    return rand_loc
   
+  def ypr_to_mat(self, yaw, pitch, roll):
+    return np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
+                     [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
+                     [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
   
   def loc2mat(self, loc, rot = None):
     if rot is None:
@@ -194,7 +200,8 @@ class Grasp(object):
     mat[:3,3] = loc
     return mat
     
-
+  def cali_image_versus_gt_pos(self):
+    self.randomly_place()
 
 
 
@@ -202,9 +209,11 @@ if __name__ == '__main__':
   rospy.init_node('grasp')
   grasp = Grasp()
   rospy.sleep(1)
-  grasp.move_away()
-  # prev_loc = [0.03764878, 0.71243892, 0.34]
-  # prev_mat = grasp.loc2mat(prev_loc)
+  # grasp.move_away()
+  prev_loc = [0.1, 0.5, 0.34]
+  prev_mat = grasp.loc2mat(prev_loc)
+  grasp.move_to_joint(grasp.ur5e_arm.inverse(prev_mat, False, q_guess=grasp.joint_state), 10)
+  rospy.sleep(11)
   # grasp.randomly_place()
   # grasp.print_forwards()
   # grasp.move_to_start()
