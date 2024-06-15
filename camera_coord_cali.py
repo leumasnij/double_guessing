@@ -133,10 +133,14 @@ class Grasp(object):
   
   def move_away(self):
 
-    self.move_to_joint(self.reset_joint, 5)
+    cur_loc = self.ur5e_arm.forward(self.joint_state, 'matrix')
+    cur_loc[2,3] = 0.34
+    new_joint = self.ur5e_arm.inverse(cur_loc, False, q_guess=self.joint_state)
+
+    self.move_to_joint(new_joint, 5)
     rospy.sleep(5.5)
 
-    away_joint = self.reset_joint
+    away_joint = self.reset_joint[:]
     away_joint[0] = 0.5
     print(away_joint)
     print(self.reset_joint)
@@ -171,9 +175,9 @@ class Grasp(object):
     self.move_to_joint(self.ur5e_arm.inverse(cur_mat, False, q_guess=self.joint_state), 3)
     rospy.sleep(3)
     self.grasp_part(60)
-    randx_offset = np.random.uniform(-0.25, 0.25)
-    randy_offset = np.random.uniform(-0.25, 0.25)
-    rand_loc = np.array([0.08 + randx_offset, 0.6 + randy_offset, 0.34])
+    randx = np.random.uniform(-0.4, 0.4)
+    randy = np.random.uniform(0.3, 0.8)
+    rand_loc = np.array([randx, randy, 0.34])
     print(rand_loc)
     rand_mat = np.zeros((3,4))
     rand_mat[:3,:3] = self.start_rot
@@ -182,7 +186,7 @@ class Grasp(object):
     rospy.sleep(5)
     rand_mat[2,3] = 0.22
     self.move_to_joint(self.ur5e_arm.inverse(rand_mat, False, q_guess=self.joint_state), 3)
-    rospy.sleep(3)
+    rospy.sleep(4)
     gripper.homing()
     self.move_away()
     return rand_loc
@@ -201,7 +205,20 @@ class Grasp(object):
     return mat
     
   def cali_image_versus_gt_pos(self):
-    self.randomly_place()
+    robot_pos_list = []
+    img_pos_list = []
+    prev_pos = self.start_mat
+    for i in range(50):
+        robot_pos = self.randomly_place(prev_pos)
+        img_pos = detect_tag()
+        robot_pos_list.append(robot_pos[:2])
+        img_pos_list.append(img_pos)
+        prev_pos = self.loc2mat(robot_pos)
+    trans_mat1 = cv2.findHomography(np.array(img_pos_list), np.array(robot_pos_list))
+    trans_mat2 = cv2.findHomography(np.array(robot_pos_list), np.array(img_pos_list))
+    save_dict = {'img2robot': trans_mat1, 'robot2img': trans_mat2}
+    np.save('./cali50.npy', save_dict)
+    
 
 
 
@@ -210,10 +227,11 @@ if __name__ == '__main__':
   grasp = Grasp()
   rospy.sleep(1)
   # grasp.move_away()
-  prev_loc = [0.1, 0.5, 0.34]
-  prev_mat = grasp.loc2mat(prev_loc)
-  grasp.move_to_joint(grasp.ur5e_arm.inverse(prev_mat, False, q_guess=grasp.joint_state), 10)
-  rospy.sleep(11)
-  # grasp.randomly_place()
+  # prev_loc = [-0.4, 0.3, 0.23]
+  # prev_mat = grasp.loc2mat(prev_loc)
+  # grasp.move_to_joint(grasp.ur5e_arm.inverse(prev_mat, False, q_guess=grasp.joint_state), 10)
+  # rospy.sleep(11)
+  # grasp.cali_image_versus_gt_pos()
   # grasp.print_forwards()
   # grasp.move_to_start()
+  grasp.move_away()

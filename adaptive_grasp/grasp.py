@@ -19,174 +19,174 @@ from ur_ikfast import ur_kinematics
 import math
 import numpy as np
 from kinematic import forward_kinematic, inverse_kinematic, inverse_kinematic_orientation
+from apriltag_helper.tag import detect_tag, img2robot
 
+# class CameraCapture1:
+#     def __init__(self):
+#         self.cap = cv2.VideoCapture(0)
+#         self.ret, self.frame = self.cap.read()
+#         self.is_running = True
+#         self.record = False
+#         thread = threading.Thread(target=self.update, args=())
+#         thread.daemon = True
+#         thread.start()
 
-class CameraCapture1:
-    def __init__(self):
-        self.cap = cv2.VideoCapture(0)
-        self.ret, self.frame = self.cap.read()
-        self.is_running = True
-        self.record = False
-        thread = threading.Thread(target=self.update, args=())
-        thread.daemon = True
-        thread.start()
+#     def update(self):
+#         while self.is_running:
+#             self.ret, self.frame = self.cap.read()
+#             while not self.ret:
+#                self.ret, self.frame = self.cap.read()
+#             if self.record:
+#                 self.out.write(self.frame)
 
-    def update(self):
-        while self.is_running:
-            self.ret, self.frame = self.cap.read()
-            while not self.ret:
-               self.ret, self.frame = self.cap.read()
-            if self.record:
-                self.out.write(self.frame)
+#     def read(self):
+#         return self.ret, self.frame.copy()
+#     def start_record(self, out_adr):
+#         fourcc = cv2.VideoWriter_fourcc(*'XVID')
+#         self.out = cv2.VideoWriter(out_adr, fourcc, 10.0, self.frame.shape[1::-1])
+#         self.record = True
 
-    def read(self):
-        return self.ret, self.frame.copy()
-    def start_record(self, out_adr):
-        fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        self.out = cv2.VideoWriter(out_adr, fourcc, 10.0, self.frame.shape[1::-1])
-        self.record = True
+#     def end_record(self):
+#         self.record = False
+#         rospy.sleep(1)
+#         if self.out.isOpened():
+#            self.out.release()
 
-    def end_record(self):
-        self.record = False
-        rospy.sleep(1)
-        if self.out.isOpened():
-           self.out.release()
+#     def release(self):
+#         self.is_running = False
+#         rospy.sleep(1)
+#         self.cap.release()
 
-    def release(self):
-        self.is_running = False
-        rospy.sleep(1)
-        self.cap.release()
-
-class MarkerTracker:
-    def __init__(self):
-        self.cap = CameraCapture1()
-        self.ret, self.frame = self.cap.read()
-        self.tac_img_size = (960, 720)
-        self.init_frame = gs.resize_crop_mini(self.frame, self.tac_img_size[0], self.tac_img_size[1])
-        self.MarkerI = gs.find_markers(self.init_frame)
-        self.old_markers = self.MarkerI
-        self.is_running = True
-        thread = threading.Thread(target=self.update, args=())
-        thread.daemon = True
-        thread.start()
-        rospy.sleep(1)
-    def update(self):
-        while self.is_running:
-            self.ret, frame = self.cap.read()
-            self.frame = gs.resize_crop_mini(frame, self.tac_img_size[0], self.tac_img_size[1])
-            self.markers = gs.find_markers(self.frame)
-            self.center_now, self.markerU, self.markerV = gs.update_markerMotion(self.markers, self.old_markers, self.MarkerI)
-            self.old_markers = self.center_now
-            frame2 = gs.displaycentres(self.frame, self.MarkerI, self.markerU, self.markerV)
-            self.average_movement = np.mean(np.sqrt(self.markerU**2 + self.markerV**2))
-            cv2.putText(frame, 'Average Movement: ' + str(self.average_movement), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
-            self.return_frame = frame2.copy()
-            self.new = True
-            # cv2.imshow('frame', frame)
-    def get(self):
-        while not self.new:
-            continue
-        self.new = False
-        return self.return_frame, self.frame
-    def move(self):
-       return self.average_movement
+# class MarkerTracker:
+#     def __init__(self):
+#         self.cap = CameraCapture1()
+#         self.ret, self.frame = self.cap.read()
+#         self.tac_img_size = (960, 720)
+#         self.init_frame = gs.resize_crop_mini(self.frame, self.tac_img_size[0], self.tac_img_size[1])
+#         self.MarkerI = gs.find_markers(self.init_frame)
+#         self.old_markers = self.MarkerI
+#         self.is_running = True
+#         thread = threading.Thread(target=self.update, args=())
+#         thread.daemon = True
+#         thread.start()
+#         rospy.sleep(1)
+#     def update(self):
+#         while self.is_running:
+#             self.ret, frame = self.cap.read()
+#             self.frame = gs.resize_crop_mini(frame, self.tac_img_size[0], self.tac_img_size[1])
+#             self.markers = gs.find_markers(self.frame)
+#             self.center_now, self.markerU, self.markerV = gs.update_markerMotion(self.markers, self.old_markers, self.MarkerI)
+#             self.old_markers = self.center_now
+#             frame2 = gs.displaycentres(self.frame, self.MarkerI, self.markerU, self.markerV)
+#             self.average_movement = np.mean(np.sqrt(self.markerU**2 + self.markerV**2))
+#             cv2.putText(frame, 'Average Movement: ' + str(self.average_movement), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
+#             self.return_frame = frame2.copy()
+#             self.new = True
+#             # cv2.imshow('frame', frame)
+#     def get(self):
+#         while not self.new:
+#             continue
+#         self.new = False
+#         return self.return_frame, self.frame
+#     def move(self):
+#        return self.average_movement
     
-    def start_record(self, out_adr):
-        self.cap.start_record(out_adr)
-    def end_record(self):
-        self.cap.end_record()
-    def release(self):
-        self.is_running = False
-        rospy.sleep(1)
-        self.cap.release()
+#     def start_record(self, out_adr):
+#         self.cap.start_record(out_adr)
+#     def end_record(self):
+#         self.cap.end_record()
+#     def release(self):
+#         self.is_running = False
+#         rospy.sleep(1)
+#         self.cap.release()
 
 
-class OpFlowTracker:
-    def __init__(self, record=False, out_adr=None):
-        self.cap = CameraCapture1()
-        self.record = record
-        self.out_adr = out_adr
-        if self.record and self.out_adr is not None:
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            self.out = cv2.VideoWriter(self.out_adr, fourcc, 15.0, (640, 480))
-        ret, f0 = self.cap.read()
-        self.tac_img_size = (640, 480)
+# class OpFlowTracker:
+#     def __init__(self, record=False, out_adr=None):
+#         self.cap = CameraCapture1()
+#         self.record = record
+#         self.out_adr = out_adr
+#         if self.record and self.out_adr is not None:
+#             fourcc = cv2.VideoWriter_fourcc(*'XVID')
+#             self.out = cv2.VideoWriter(self.out_adr, fourcc, 15.0, (640, 480))
+#         ret, f0 = self.cap.read()
+#         self.tac_img_size = (640, 480)
 
         
-        self.init_frame = gs.resize_crop_mini(f0, self.tac_img_size[0], self.tac_img_size[1])
-        f0gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
-        self.MarkerI = gs.find_markers(self.init_frame)
-        self.Ox = self.MarkerI[:, 0]
-        self.Oy = self.MarkerI[:, 1]
-        self.nct = len(self.MarkerI)
+#         self.init_frame = gs.resize_crop_mini(f0, self.tac_img_size[0], self.tac_img_size[1])
+#         f0gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
+#         self.MarkerI = gs.find_markers(self.init_frame)
+#         self.Ox = self.MarkerI[:, 0]
+#         self.Oy = self.MarkerI[:, 1]
+#         self.nct = len(self.MarkerI)
 
-        self.old_gray = f0gray.copy()
-        self.lk_params = dict(winSize=(50, 50), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
-        self.color = np.random.randint(0, 255, (100, 3))
+#         self.old_gray = f0gray.copy()
+#         self.lk_params = dict(winSize=(50, 50), maxLevel=5, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+#         self.color = np.random.randint(0, 255, (100, 3))
 
-        self.p0 = np.array([[self.Ox[0], self.Oy[0]]], np.float32).reshape(-1, 1, 2)
-        for i in range(self.nct - 1):
-            new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
-            self.p0 = np.append(self.p0, new_point, axis=0)
-        self.is_running = True
+#         self.p0 = np.array([[self.Ox[0], self.Oy[0]]], np.float32).reshape(-1, 1, 2)
+#         for i in range(self.nct - 1):
+#             new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
+#             self.p0 = np.append(self.p0, new_point, axis=0)
+#         self.is_running = True
 
-        thread = threading.Thread(target=self.update, args=())
-        thread.daemon = True
-        thread.start()
+#         thread = threading.Thread(target=self.update, args=())
+#         thread.daemon = True
+#         thread.start()
        
-        self.new = False
-    def update(self):
+#         self.new = False
+#     def update(self):
          
-        while self.is_running:
-            self.ret, frame = self.cap.read()
-            frame = gs.resize_crop_mini(frame, self.tac_img_size[0], self.tac_img_size[1])
-            self.frame = frame.copy()
-            cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            p1, st, err = cv2.calcOpticalFlowPyrLK(self.old_gray, cur_gray, self.p0, None, **self.lk_params)
-            good_new = p1[st == 1]
-            good_old = self.p0[st == 1]
-            self.p0 = good_new.reshape(-1, 1, 2)
+#         while self.is_running:
+#             self.ret, frame = self.cap.read()
+#             frame = gs.resize_crop_mini(frame, self.tac_img_size[0], self.tac_img_size[1])
+#             self.frame = frame.copy()
+#             cur_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+#             p1, st, err = cv2.calcOpticalFlowPyrLK(self.old_gray, cur_gray, self.p0, None, **self.lk_params)
+#             good_new = p1[st == 1]
+#             good_old = self.p0[st == 1]
+#             self.p0 = good_new.reshape(-1, 1, 2)
 
-            for i, (new, old) in enumerate(zip(good_new, good_old)):
-                a, b = new.ravel()
-                ix  = int(self.Ox[i])
-                iy  = int(self.Oy[i])
-                offrame = cv2.arrowedLine(frame, (ix,iy), (int(a), int(b)), (255,255,255), thickness=1, line_type=cv2.LINE_8, tipLength=.15)
-                offrame = cv2.circle(offrame, (int(a), int(b)), 5, self.color[i].tolist(), -1)
-            if self.record and self.out_adr is not None:
-                self.out.write(offrame)
+#             for i, (new, old) in enumerate(zip(good_new, good_old)):
+#                 a, b = new.ravel()
+#                 ix  = int(self.Ox[i])
+#                 iy  = int(self.Oy[i])
+#                 offrame = cv2.arrowedLine(frame, (ix,iy), (int(a), int(b)), (255,255,255), thickness=1, line_type=cv2.LINE_8, tipLength=.15)
+#                 offrame = cv2.circle(offrame, (int(a), int(b)), 5, self.color[i].tolist(), -1)
+#             if self.record and self.out_adr is not None:
+#                 self.out.write(offrame)
             
-            # print(offrame.shape)
-            self.return_frame = offrame.copy()
-            self.new = True
-            self.old_gray = cur_gray.copy()
-            # cv2.imshow('frame', frame)
-    def get(self):
-        while not self.new:
-            continue
-        self.new = False
-        return self.return_frame, self.frame
-    def set_init_frame(self):
-        self.init_frame = self.frame
-        self.MarkerI = gs.find_markers(self.init_frame)
-        self.Ox = self.MarkerI[:, 0]
-        self.Oy = self.MarkerI[:, 1]
-        self.nct = len(self.MarkerI)
-        self.old_gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
-        self.p0 = np.array([[self.Ox[0], self.Oy[0]]], np.float32).reshape(-1, 1, 2)
-        for i in range(self.nct - 1):
-            new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
-            self.p0 = np.append(self.p0, new_point, axis=0)
-    def start_record(self, out_adr):
-        self.cap.start_record(out_adr)
-    def end_record(self):
-        self.cap.end_record()
-    def release(self):
-        self.is_running = False
-        rospy.sleep(1)
-        self.cap.release()
-        if self.record:
-            self.out.release()
+#             # print(offrame.shape)
+#             self.return_frame = offrame.copy()
+#             self.new = True
+#             self.old_gray = cur_gray.copy()
+#             # cv2.imshow('frame', frame)
+#     def get(self):
+#         while not self.new:
+#             continue
+#         self.new = False
+#         return self.return_frame, self.frame
+#     def set_init_frame(self):
+#         self.init_frame = self.frame
+#         self.MarkerI = gs.find_markers(self.init_frame)
+#         self.Ox = self.MarkerI[:, 0]
+#         self.Oy = self.MarkerI[:, 1]
+#         self.nct = len(self.MarkerI)
+#         self.old_gray = cv2.cvtColor(self.init_frame, cv2.COLOR_BGR2GRAY)
+#         self.p0 = np.array([[self.Ox[0], self.Oy[0]]], np.float32).reshape(-1, 1, 2)
+#         for i in range(self.nct - 1):
+#             new_point = np.array([[self.Ox[i+1], self.Oy[i+1]]], np.float32).reshape(-1, 1, 2)
+#             self.p0 = np.append(self.p0, new_point, axis=0)
+#     def start_record(self, out_adr):
+#         self.cap.start_record(out_adr)
+#     def end_record(self):
+#         self.cap.end_record()
+#     def release(self):
+#         self.is_running = False
+#         rospy.sleep(1)
+#         self.cap.release()
+#         if self.record:
+#             self.out.release()
 
 class Grasp(object):
   def __init__(self, record=False):
@@ -235,7 +235,7 @@ class Grasp(object):
         os.makedirs(self.saving_adr)
     exp_run = len([name for name in os.listdir(self.saving_adr) ]) + 1
     self.saving_adr = self.saving_adr + 'run' + str(exp_run) + '/'
-    self.tracker = CameraCapture1()
+    # self.tracker = CameraCapture1()
     # self.tac_img_size = self.tracker.tac_img_size
     
   def __del__(self):
@@ -332,22 +332,21 @@ class Grasp(object):
 
     #  self.move_to_joint(new_state, 10)
     #  rospy.sleep(10)
-  def pickup(self, force = 20):
+  def pickup(self, force = 20, joint = None):
     """ Pickup the object. """
     # rospy.sleep(1)
+    if joint is None:
+       joint = self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state)
     gripper.homing()
     # print(self.joint_state)
     # print(inverse_kinematic(self.joint_state, self.start_loc, self.start_rot))
 
-    self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 2)
+    self.move_to_joint(joint, 2)
     rospy.sleep(7)
 
     self.grasp_part(force)
-    # rospy.sleep(2)
-    
-    up_mat = self.start_mat.copy()
-    up_mat[2,3] += 0.2
-    self.move_to_joint(self.ur5e_arm.inverse(up_mat, False, q_guess=self.joint_state), 5)
+    up_mat = self.up_joint(joint=joint)
+    self.move_to_joint(up_mat, 5)
     rospy.sleep(5)
     # return return_ft  
     # cap.release()
@@ -578,21 +577,28 @@ class Grasp(object):
     self.move_to_joint(homing, 5)
     rospy.sleep(5)
     return pre_grasp
-     
+  
+  def up_joint(self, joint):
+      mat = self.ur5e_arm.forward(joint, 'matrix')
+      mat[2,3] = 0.4
+      return self.ur5e_arm.inverse(mat, False, q_guess=joint)
 
-  def ft_test(self):
+  def ft_test(self, force = 75, joint = None):
     gripper.homing()
-    self.move_to_joint(self.reset_joint, 5)
+    if joint is None:
+       joint = self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state)
+    up_joint = self.up_joint(joint)
+    self.move_to_joint(up_joint, 5)
     rospy.sleep(5)
     
     new_rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
-    cur_pos = self.ur5e_arm.forward(self.reset_joint, 'matrix')
+    cur_pos = self.ur5e_arm.forward(up_joint, 'matrix')
     cur_pos[:3,:3] = new_rot
-    cur_pos[2,3]+= 0.1
-    new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=self.reset_joint)
+    cur_pos[2,3]= 0.45
+    new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=up_joint)
 
     pre_grasp = self.pre_grasp(cur_pos)
-    self.pickup(75)
+    self.pickup(75, joint = joint)
     self.move_to_joint(new_state, 5)
     rospy.sleep(10)
     post_grasp = self.force_torque
@@ -602,7 +608,9 @@ class Grasp(object):
     print(total_force)
     
     rospy.sleep(5)
-    self.reset()
+    self.move_to_joint(joint, 5)
+    rospy.sleep(5)
+    gripper.homing()
     return post_grasp - pre_grasp
 
   def ypr_to_mat(self, yaw, pitch, roll):
@@ -618,26 +626,80 @@ class Grasp(object):
     mat[:3,3] = loc
     return mat
   
+  def move_away(self):
 
-  def CoM_estimation(self):
-    overall = []
-    for i in range(10):
-      x = self.ft_test()
-      overall.append(x)
+    gripper.homing()
 
-    stddv = np.std(overall, axis=0)
-    print('std ' + str(stddv))
-    avg_x = np.mean(overall, axis=0)
-    print('average ' + str(avg_x))
+    cur_loc = self.ur5e_arm.forward(self.joint_state, 'matrix')
+    cur_loc[2,3] = 0.5
+    new_joint = self.ur5e_arm.inverse(cur_loc, False, q_guess=self.joint_state)
+
+    self.move_to_joint(new_joint, 5)
+    rospy.sleep(5.5)
+
+    away_joint = new_joint[:]
+    away_joint[0] = 0.5
+
+    self.move_to_joint(away_joint, 5)
+    rospy.sleep(5.5)
+
+  def CoM_estimation(self, testid = 0):
+    rospy.sleep(1)
+    self.move_away()
+    img_tag, tagID = detect_tag()
+    robot_loc = img2robot(img_tag)
+    if tagID == 1:
+      robot_loc[2] = 0.245
+    elif tagID == 2:
+      robot_loc[2] = 0.23
+    elif tagID == 3:
+      robot_loc[2] = 0.23
+    GT = robot_loc.copy()
+    print(GT)
+    # if tagID == 2:
+    #   random_offset = 0
+    #   while abs(random_offset) < 0.06:
+    #     random_offset = np.random.uniform(-0.25, 0.25)
+    # else:
+    #   
+    random_offset = np.random.uniform(-0.1, 0.1)
+    robot_loc[0] += random_offset
+    print(robot_loc)
+    robot_mat = self.loc2mat(robot_loc)
+    new_joint = self.ur5e_arm.inverse(robot_mat, False, q_guess=self.joint_state)
+    x = self.ft_test(joint = new_joint)
+    GT = robot_loc - GT
+    save_dict = {'GT': GT, 'force': x}
+    print(GT, x)
+    if not os.path.exists(self.saving_adr):
+        os.makedirs(self.saving_adr)
+    np.save(self.saving_adr + 'data' + str(testid) + '.npy', save_dict)
+
+  def force_torque_data(self):
+    for i in range(100):
+      self.CoM_estimation(i)
+    
+    # overall = []
+    # for i in range(10):
+    #   x = self.ft_test()
+    #   overall.append(x)
+
+    # stddv = np.std(overall, axis=0)
+    # print('std ' + str(stddv))
+    # avg_x = np.mean(overall, axis=0)
+    # print('average ' + str(avg_x))
 
 
 
 if __name__ == '__main__':
   rospy.init_node('grasp')
   rospy.sleep(1)
-  np.random.seed(42)
+  # np.random.seed(42)
   Grasp_ = Grasp(record=False)
-  Grasp_.CoM_estimation()
+
+
+  Grasp_.force_torque_data()
+  # Grasp_.CoM_estimation()
   # Grasp_.ft_test()
   
 #   Grasp_.test2()
