@@ -232,6 +232,6 @@ if __name__ == '__main__':
   # grasp.move_to_joint(grasp.ur5e_arm.inverse(prev_mat, False, q_guess=grasp.joint_state), 10)
   # rospy.sleep(11)
   # grasp.cali_image_versus_gt_pos()
-  # grasp.print_forwards()
+  grasp.print_forwards()
   # grasp.move_to_start()
-  grasp.move_away()
+  # grasp.move_away()

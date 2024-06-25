@@ -1,4 +1,5 @@
 #Adaptive Grasping
+#!/usr/bin/env python
 from re import I
 import cv2
 import os
@@ -19,86 +20,12 @@ from ur_ikfast import ur_kinematics
 import math
 import numpy as np
 from kinematic import forward_kinematic, inverse_kinematic, inverse_kinematic_orientation
-from apriltag_helper.tag import detect_tag, img2robot
+from apriltag_helper.tag import detect_tag, img2robot, CoM_calulation
+import torch
+import neural_networks.nn_helpers as nnh
+from cam_read import CameraCapture, RealSenseCam
 
-# class CameraCapture1:
-#     def __init__(self):
-#         self.cap = cv2.VideoCapture(0)
-#         self.ret, self.frame = self.cap.read()
-#         self.is_running = True
-#         self.record = False
-#         thread = threading.Thread(target=self.update, args=())
-#         thread.daemon = True
-#         thread.start()
 
-#     def update(self):
-#         while self.is_running:
-#             self.ret, self.frame = self.cap.read()
-#             while not self.ret:
-#                self.ret, self.frame = self.cap.read()
-#             if self.record:
-#                 self.out.write(self.frame)
-
-#     def read(self):
-#         return self.ret, self.frame.copy()
-#     def start_record(self, out_adr):
-#         fourcc = cv2.VideoWriter_fourcc(*'XVID')
-#         self.out = cv2.VideoWriter(out_adr, fourcc, 10.0, self.frame.shape[1::-1])
-#         self.record = True
-
-#     def end_record(self):
-#         self.record = False
-#         rospy.sleep(1)
-#         if self.out.isOpened():
-#            self.out.release()
-
-#     def release(self):
-#         self.is_running = False
-#         rospy.sleep(1)
-#         self.cap.release()
-
-# class MarkerTracker:
-#     def __init__(self):
-#         self.cap = CameraCapture1()
-#         self.ret, self.frame = self.cap.read()
-#         self.tac_img_size = (960, 720)
-#         self.init_frame = gs.resize_crop_mini(self.frame, self.tac_img_size[0], self.tac_img_size[1])
-#         self.MarkerI = gs.find_markers(self.init_frame)
-#         self.old_markers = self.MarkerI
-#         self.is_running = True
-#         thread = threading.Thread(target=self.update, args=())
-#         thread.daemon = True
-#         thread.start()
-#         rospy.sleep(1)
-#     def update(self):
-#         while self.is_running:
-#             self.ret, frame = self.cap.read()
-#             self.frame = gs.resize_crop_mini(frame, self.tac_img_size[0], self.tac_img_size[1])
-#             self.markers = gs.find_markers(self.frame)
-#             self.center_now, self.markerU, self.markerV = gs.update_markerMotion(self.markers, self.old_markers, self.MarkerI)
-#             self.old_markers = self.center_now
-#             frame2 = gs.displaycentres(self.frame, self.MarkerI, self.markerU, self.markerV)
-#             self.average_movement = np.mean(np.sqrt(self.markerU**2 + self.markerV**2))
-#             cv2.putText(frame, 'Average Movement: ' + str(self.average_movement), (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2, cv2.LINE_AA)
-#             self.return_frame = frame2.copy()
-#             self.new = True
-#             # cv2.imshow('frame', frame)
-#     def get(self):
-#         while not self.new:
-#             continue
-#         self.new = False
-#         return self.return_frame, self.frame
-#     def move(self):
-#        return self.average_movement
-    
-#     def start_record(self, out_adr):
-#         self.cap.start_record(out_adr)
-#     def end_record(self):
-#         self.cap.end_record()
-#     def release(self):
-#         self.is_running = False
-#         rospy.sleep(1)
-#         self.cap.release()
 
 
 # class OpFlowTracker:
@@ -192,6 +119,10 @@ class Grasp(object):
   def __init__(self, record=False):
     
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
+    self.model = nnh.Net()
+    self.model.load_state_dict(torch.load('/home/okemo/samueljin/stablegrasp_ws/src/best_model.pth'))
+    # torch.load('/home/okemo/samueljin/stablegrasp_ws/src/best_model.pth')
+    self.model.eval()
     # self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
     self.reset_joint = [ 1.21490335, -1.283166,  1.6231562, -1.910088, -1.567829,  -0.359537]
     self.start_loc = np.array([0.08, 0.6, 0.245])
@@ -221,7 +152,8 @@ class Grasp(object):
     rospy.Subscriber('/joint_states', JointState, self.cb_joint_states)
     # rospy.Subscriber('/weight', Float32, self.cb_weight)
     rospy.Subscriber('/wsg_50_driver/status', Status, self.cb_gripper)
-    rospy.Subscriber('/wrench', WrenchStamped, self.cb_force_torque)
+    rospy.Subscriber('/wrench', WrenchStamped, self.cb_force_torque, queue_size=1)
+    # rospy.Subscriber('/wrist_sensor/wrench', WrenchStamped, self.cb_force_torque, queue_size=1)
     rospy.sleep(1)
     # Publishers
     self.pos_controller = rospy.Publisher('/scaled_pos_joint_traj_controller/command',
@@ -237,9 +169,57 @@ class Grasp(object):
     self.saving_adr = self.saving_adr + 'run' + str(exp_run) + '/'
     # self.tracker = CameraCapture1()
     # self.tac_img_size = self.tracker.tac_img_size
+
+    #cameras
+    # self.realsense = RealSenseCam()
+    self.overhead_cam = None
+    self.marker_gelsight = None
+    self.unmarker_gelsight = None
+    self.init_cam()
+
+
+  def init_cam(self):
+    for i in range(0,9,2):
+      cap = cv2.VideoCapture(i)
+      ret, frame = cap.read()
+      if ret:
+          cv2.imwrite(str(i) + '.jpg', frame)
+          file = 'video' + str(i)
+          real_file = os.path.realpath("/sys/class/video4linux/" + file + "/name")
+          with open(real_file, "rt") as name_file:
+              name = name_file.read()
+          cap.release()
+          if name == 'HD Pro Webcam C920\n':
+            self.overhead_cam = CameraCapture(i)
+            continue
+          if name == 'GelSight Mini R0B 2G4W-G32G: Ge\n':
+            self.marker_gelsight = CameraCapture(i)
+            continue
+          if name == 'GelSight Mini R0B 28UV-U5R7: Ge\n':
+            self.unmarker_gelsight = CameraCapture(i)
+            continue
+      cap.release()
+
+
+
+  def showcamera(self):
+    while True:
+        rs_frame = self.realsense.get_frame()
+        cv2.imshow('rs_frame', rs_frame)
+        if self.overhead_cam is not None:
+          overhead_frame = self.overhead_cam.read()
+          cv2.imshow('overhead_frame', overhead_frame)
+        if self.marker_gelsight is not None:
+          marker_frame = self.marker_gelsight.read()
+          cv2.imshow('marker_frame', marker_frame)
+        if self.unmarker_gelsight is not None:
+          unmarker_frame = self.unmarker_gelsight.read()
+          cv2.imshow('unmarker_frame', unmarker_frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
     
   def __del__(self):
-    self.tracker.release()
+    # self.tracker.release()
     rospy.sleep(1)
 
   def get_joint_angle(self, s):
@@ -265,12 +245,15 @@ class Grasp(object):
        
     self.force_torque = np.array([msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z,
                   msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z])
+    # print(self.force_torque)
     if len(self.ftwindow) < 15:
         self.ftwindow.append(self.force_torque)
         return
+    
     self.ftwindow.pop(0)
     self.ftwindow.append(self.force_torque)
     self.force_torque = np.mean(self.ftwindow, axis=0)
+    # print(self.ftwindow)
     # if self.force_calibrated == False:
     #     self.cali_force(self.force_torque)
     # else:
@@ -293,11 +276,14 @@ class Grasp(object):
     pos_message_point.time_from_start = rospy.Duration(time)
     pos_message.points.append(pos_message_point)
     self.pos_controller.publish(pos_message)
+  
+  def reset_gripper(self):
+    gripper.move(50)
 
   def grasp_part(self, force):
     gripper.set_force(force)
     rospy.sleep(1)
-    target_width = 90
+    target_width = 40
     while self.gripper_force < 5 and target_width >=0:
       rospy.sleep(0.1)
       gripper.grasp(target_width, 60)
@@ -309,35 +295,35 @@ class Grasp(object):
     gripper.grasp(self.gripper_width, 60)
 
 
-  def random_rotate(self):
-    # np.random.seed(0)
-    new_state = self.generate_random_pos()
-    ref_ang = 1.21485949
-    rand_ang = np.random.uniform(-np.pi/2, np.pi/2)
-    new_state[-1] = ref_ang + rand_ang
-    self.move_to_joint(new_state, 10)
-    rospy.sleep(15)
+  # def random_rotate(self):
+  #   # np.random.seed(0)
+  #   new_state = self.generate_random_pos()
+  #   ref_ang = 1.21485949
+  #   rand_ang = np.random.uniform(-np.pi/2, np.pi/2)
+  #   new_state[-1] = ref_ang + rand_ang
+  #   self.move_to_joint(new_state, 10)
+  #   rospy.sleep(15)
 
-  def test_rot(self):
-     roll = np.random.uniform(3*np.pi/4, 5*np.pi/4)
-     pitch = np.random.uniform(0, np.pi/2)
-     yaw = np.random.uniform(np.pi/2, np.pi)
-     rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
-                    [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
-                    [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
-     cur_angle, cur_pos = forward_kinematic(self.joint_state)
-     new_state = inverse_kinematic_orientation(self.joint_state, cur_pos, rot)
-     print(self.joint_state)
-     print(new_state)
+  # def test_rot(self):
+  #    roll = np.random.uniform(3*np.pi/4, 5*np.pi/4)
+  #    pitch = np.random.uniform(0, np.pi/2)
+  #    yaw = np.random.uniform(np.pi/2, np.pi)
+  #    rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
+  #                   [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
+  #                   [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
+  #    cur_angle, cur_pos = forward_kinematic(self.joint_state)
+  #    new_state = inverse_kinematic_orientation(self.joint_state, cur_pos, rot)
+  #    print(self.joint_state)
+  #    print(new_state)
 
     #  self.move_to_joint(new_state, 10)
     #  rospy.sleep(10)
-  def pickup(self, force = 20, joint = None):
+  def pickup(self, force = 80, joint = None):
     """ Pickup the object. """
     # rospy.sleep(1)
     if joint is None:
        joint = self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state)
-    gripper.homing()
+    self.reset_gripper()
     # print(self.joint_state)
     # print(inverse_kinematic(self.joint_state, self.start_loc, self.start_rot))
 
@@ -345,9 +331,11 @@ class Grasp(object):
     rospy.sleep(7)
 
     self.grasp_part(force)
+    ref_gel = self.marker_gelsight.read()
     up_mat = self.up_joint(joint=joint)
     self.move_to_joint(up_mat, 5)
     rospy.sleep(5)
+    return ref_gel
     # return return_ft  
     # cap.release()
     # cv2.destroyAllWindows()
@@ -378,13 +366,13 @@ class Grasp(object):
     # cv2.destroyAllWindows()
     # print('done')
     #   rospy.sleep(2)
-  def showcamera(self):
-    while True:
-        frame, og_frame = self.tracker.get()
-        cv2.imshow('frame', frame)
-        cv2.imshow('og_frame', og_frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+  # def showcamera(self):
+  #   while True:
+  #       frame, og_frame = self.tracker.get()
+  #       cv2.imshow('frame', frame)
+  #       cv2.imshow('og_frame', og_frame)
+  #       if cv2.waitKey(1) & 0xFF == ord('q'):
+  #           break
 
   def reset(self):
     rospy.sleep(1)
@@ -395,185 +383,188 @@ class Grasp(object):
     rospy.sleep(5)
     self.move_to_joint(self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state), 5)
     rospy.sleep(5)
-    gripper.homing()
+    # gripper.homing()
+    self.reset_gripper()
 
-  def save_np_data(self, force, pos_num):
-    save_adr = self.saving_adr + 'raw_data/'+ str(pos_num) + '/'
-    if not os.path.exists(save_adr):
-        os.makedirs(save_adr)
-    np.save(save_adr + 'force' + str(pos_num) + '.npy', np.array(force))
-    # np.save(save_adr + 'movement' + str(pos_num) + '.npy', np.array(movement))
+  # def save_np_data(self, force, pos_num):
+  #   save_adr = self.saving_adr + 'raw_data/'+ str(pos_num) + '/'
+  #   if not os.path.exists(save_adr):
+  #       os.makedirs(save_adr)
+  #   np.save(save_adr + 'force' + str(pos_num) + '.npy', np.array(force))
+  #   # np.save(save_adr + 'movement' + str(pos_num) + '.npy', np.array(movement))
 
-  def save_raw_data(self, img, num_pos):
-        save_adr = self.saving_adr + 'raw_data/'+ str(num_pos) + '/'
-        if not os.path.exists(save_adr):
-            os.makedirs(save_adr)
-        count = len([name for name in os.listdir(save_adr) if os.path.isfile(os.path.join(save_adr, name))] ) + 1
-        cv2.imwrite(save_adr + 'img' + str(count) + '.png', img)
+  # def save_raw_data(self, img, num_pos):
+  #       save_adr = self.saving_adr + 'raw_data/'+ str(num_pos) + '/'
+  #       if not os.path.exists(save_adr):
+  #           os.makedirs(save_adr)
+  #       count = len([name for name in os.listdir(save_adr) if os.path.isfile(os.path.join(save_adr, name))] ) + 1
+  #       cv2.imwrite(save_adr + 'img' + str(count) + '.png', img)
 
-  def test(self):
-    if not os.path.exists(self.saving_adr):
-        os.makedirs(self.saving_adr)
-    self.pickup()
-    # frame, og_frame = self.tracker.get()
-    # self.save_raw_data(og_frame, 0)
+  # def test(self):
+  #   if not os.path.exists(self.saving_adr):
+  #       os.makedirs(self.saving_adr)
+  #   self.pickup()
+  #   # frame, og_frame = self.tracker.get()
+  #   # self.save_raw_data(og_frame, 0)
   
-    # self.random_rotate()
-    # count = 30
-    pos_num = 1
-    forces = []
-    while pos_num<=10:
-        forces.append(self.gripper_force)
-        # frame, og_frame = self.tracker.get()
-        # self.save_raw_data(og_frame, pos_num)
-        # if count == 30:
-            # self.save_np_data(forces, pos_num)
-            # forces = []
-            # movement = []
-        self.random_rotate()
+  #   # self.random_rotate()
+  #   # count = 30
+  #   pos_num = 1
+  #   forces = []
+  #   while pos_num<=10:
+  #       forces.append(self.gripper_force)
+  #       # frame, og_frame = self.tracker.get()
+  #       # self.save_raw_data(og_frame, pos_num)
+  #       # if count == 30:
+  #           # self.save_np_data(forces, pos_num)
+  #           # forces = []
+  #           # movement = []
+  #       self.random_rotate()
        
-        self.test_motion(pos_num  )
+  #       self.test_motion(pos_num  )
        
-        # count = 1
-        pos_num += 1
-        continue
-        # cv2.imshow('frame', frame)
-        # count += 1
-        # print(count)
-    self.reset()
+  #       # count = 1
+  #       pos_num += 1
+  #       continue
+  #       # cv2.imshow('frame', frame)
+  #       # count += 1
+  #       # print(count)
+  #   self.reset()
 
-  def test_motion(self, pos_num):
-      CurPos = self.ur5e_arm.forward(self.joint_state)
-      print(CurPos)
-      NewPos = CurPos.copy()
-      if(NewPos[2] > 0.5):
-        NewPos[2] -= 0.1
-      else:
-        NewPos[2] += 0.1
-      if(NewPos[1] > 0.5):
-        NewPos[1] -= 0.1
-      else:
-        NewPos[1] += 0.1
-      if(NewPos[0] > 0.5):
-        NewPos[0] -= 0.1
-      else:
-        NewPos[0] += 0.1
-      self.tracker.start_record(self.saving_adr + 'pos' + str(pos_num) + '.avi')
-      new_state = self.ur5e_arm.inverse(NewPos, False, q_guess=self.joint_state)
-      self.move_to_joint(new_state, 1)
-      rospy.sleep(1.5)
-      ori_state = self.ur5e_arm.inverse(CurPos, False, q_guess=self.joint_state)
-      self.move_to_joint(ori_state, 1)
-      rospy.sleep(1.5)
-      self.tracker.end_record()
-      print('done')
+  # def test_motion(self, pos_num):
+  #     CurPos = self.ur5e_arm.forward(self.joint_state)
+  #     print(CurPos)
+  #     NewPos = CurPos.copy()
+  #     if(NewPos[2] > 0.5):
+  #       NewPos[2] -= 0.1
+  #     else:
+  #       NewPos[2] += 0.1
+  #     if(NewPos[1] > 0.5):
+  #       NewPos[1] -= 0.1
+  #     else:
+  #       NewPos[1] += 0.1
+  #     if(NewPos[0] > 0.5):
+  #       NewPos[0] -= 0.1
+  #     else:
+  #       NewPos[0] += 0.1
+  #     # self.tracker.start_record(self.saving_adr + 'pos' + str(pos_num) + '.avi')
+  #     new_state = self.ur5e_arm.inverse(NewPos, False, q_guess=self.joint_state)
+  #     self.move_to_joint(new_state, 1)
+  #     rospy.sleep(1.5)
+  #     ori_state = self.ur5e_arm.inverse(CurPos, False, q_guess=self.joint_state)
+  #     self.move_to_joint(ori_state, 1)
+  #     rospy.sleep(1.5)
+  #     # self.tracker.end_record()
+  #     print('done')
 
-  def generate_random_pos(self):
+  # def generate_random_pos(self):
     
-    position = np.array([0.08, 0.6, 0.40])
-    roll = np.pi
-    # pitch = np.pi/4
-    pitch = np.random.uniform(2e-3, np.pi)
-    yaw = np.random.uniform(-np.pi/4, -np.pi/2)
-    # yaw = -np.pi/2
-    rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
-                    [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
-                    [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
+  #   position = np.array([0.08, 0.6, 0.40])
+  #   roll = np.pi
+  #   # pitch = np.pi/4
+  #   pitch = np.random.uniform(2e-3, np.pi)
+  #   yaw = np.random.uniform(-np.pi/4, -np.pi/2)
+  #   # yaw = -np.pi/2
+  #   rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
+  #                   [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
+  #                   [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
 
-    new_mat = np.zeros((3,4))
-    new_mat[:3,:3] = rot
-    new_mat[:3,3] = position
-    new_state = self.ur5e_arm.inverse(new_mat, False, q_guess=self.joint_state)
-    if new_state is None:
-      return self.generate_random_pos()
-    # print(self.ur5e_arm.forward(new_state))
+  #   new_mat = np.zeros((3,4))
+  #   new_mat[:3,:3] = rot
+  #   new_mat[:3,3] = position
+  #   new_state = self.ur5e_arm.inverse(new_mat, False, q_guess=self.joint_state)
+  #   if new_state is None:
+  #     return self.generate_random_pos()
+  #   # print(self.ur5e_arm.forward(new_state))
     
-    ref_ang, _ = forward_kinematic(new_state)
-    another_state = inverse_kinematic_orientation(self.joint_state, position, ref_ang)
-    _, pos = forward_kinematic(another_state)
-    pos[0] = pos[0] *-1
-    pos[1] = pos[1] *-1
+  #   ref_ang, _ = forward_kinematic(new_state)
+  #   another_state = inverse_kinematic_orientation(self.joint_state, position, ref_ang)
+  #   _, pos = forward_kinematic(another_state)
+  #   pos[0] = pos[0] *-1
+  #   pos[1] = pos[1] *-1
 
 
-    another_mat = np.zeros((3,4))
-    another_mat[:3,:3] = rot
-    another_mat[:3,3] = pos
-    another_state = self.ur5e_arm.inverse(another_mat, False, q_guess=self.joint_state)
-    if another_state is None:
-      return self.generate_random_pos()
-    return another_state
-    # print(ur5e_arm.forward(another_state))
-    # print(self.joint_state)
-    # print(new_state)
-    # print(another_state)
-    # self.move_to_joint(new_state, 15)
-    # rospy.sleep(15)
-    # # self.move_to_joint(another_state, 15)
-    # # rospy.sleep(15)
-    # self.move_to_joint(self.reset_joint, 15)
-    # rospy.sleep(15)
-  def impluse_motion(self, direction, time):
-    """ Impluse motion. """
-    cur_ang, cur_pos = forward_kinematic(self.joint_state)
-    new_pos = cur_pos + direction
-    new_state = inverse_kinematic(self.joint_state, new_pos[:3], cur_ang)
-    self.move_to_joint(new_state, time)
-    rospy.sleep(time)
+  #   another_mat = np.zeros((3,4))
+  #   another_mat[:3,:3] = rot
+  #   another_mat[:3,3] = pos
+  #   another_state = self.ur5e_arm.inverse(another_mat, False, q_guess=self.joint_state)
+  #   if another_state is None:
+  #     return self.generate_random_pos()
+  #   return another_state
+  #   # print(ur5e_arm.forward(another_state))
+  #   # print(self.joint_state)
+  #   # print(new_state)
+  #   # print(another_state)
+  #   # self.move_to_joint(new_state, 15)
+  #   # rospy.sleep(15)
+  #   # # self.move_to_joint(another_state, 15)
+  #   # # rospy.sleep(15)
+  #   # self.move_to_joint(self.reset_joint, 15)
+  #   # rospy.sleep(15)
+  # def impluse_motion(self, direction, time):
+  #   """ Impluse motion. """
+  #   cur_ang, cur_pos = forward_kinematic(self.joint_state)
+  #   new_pos = cur_pos + direction
+  #   new_state = inverse_kinematic(self.joint_state, new_pos[:3], cur_ang)
+  #   self.move_to_joint(new_state, time)
+  #   rospy.sleep(time)
 
-  def rotate_to(self, roll, pitch, yaw, inhand):
-    cur_pos = self.ur5e_arm.forward(self.joint_state, 'matrix')
-    rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
-                    [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
-                    [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
-    cur_pos[:3,:3] = rot
-    new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=self.joint_state)
-    ref_ang, ref_pos = forward_kinematic(new_state)
-    another_state = inverse_kinematic_orientation(self.joint_state, ref_pos, ref_ang)
-    _, pos = forward_kinematic(another_state)
-    pos[0] = pos[0] *-1
-    pos[1] = pos[1] *-1
-    if pos[2] > 0.5:
-      pos[2] = 0.5
-    if pos[0] > 0.1:
-      pos[0] = 0.1
-    if pos[1] > 0.5:
-      pos[1] = 0.5
-    another_mat = np.zeros((3,4))
-    another_mat[:3,:3] = rot
-    another_mat[:3,3] = pos
-    another_state = self.ur5e_arm.inverse(another_mat, False, q_guess=self.joint_state)
-    another_state[-1] = self.joint_state[-1] + inhand + 0.3
-    self.move_to_joint(another_state, 20)
-    rospy.sleep(20)
+  # def rotate_to(self, roll, pitch, yaw, inhand):
+  #   cur_pos = self.ur5e_arm.forward(self.joint_state, 'matrix')
+  #   rot = np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
+  #                   [np.sin(yaw)*np.cos(pitch), np.sin(yaw)*np.sin(pitch)*np.sin(roll)+np.cos(yaw)*np.cos(roll), np.sin(yaw)*np.sin(pitch)*np.cos(roll)-np.cos(yaw)*np.sin(roll)],
+  #                   [-np.sin(pitch), np.cos(pitch)*np.sin(roll), np.cos(pitch)*np.cos(roll)]])
+  #   cur_pos[:3,:3] = rot
+  #   new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=self.joint_state)
+  #   ref_ang, ref_pos = forward_kinematic(new_state)
+  #   another_state = inverse_kinematic_orientation(self.joint_state, ref_pos, ref_ang)
+  #   _, pos = forward_kinematic(another_state)
+  #   pos[0] = pos[0] *-1
+  #   pos[1] = pos[1] *-1
+  #   if pos[2] > 0.5:
+  #     pos[2] = 0.5
+  #   if pos[0] > 0.1:
+  #     pos[0] = 0.1
+  #   if pos[1] > 0.5:
+  #     pos[1] = 0.5
+  #   another_mat = np.zeros((3,4))
+  #   another_mat[:3,:3] = rot
+  #   another_mat[:3,3] = pos
+  #   another_state = self.ur5e_arm.inverse(another_mat, False, q_guess=self.joint_state)
+  #   another_state[-1] = self.joint_state[-1] + inhand + 0.3
+  #   self.move_to_joint(another_state, 20)
+  #   rospy.sleep(20)
 
-  def test2(self):
-    self.start_roll = np.pi
-    self.start_pitch = 2e-3
-    self.start_yaw = -np.pi/2
+  # def test2(self):
+  #   self.start_roll = np.pi
+  #   self.start_pitch = 2e-3
+  #   self.start_yaw = -np.pi/2
     
     
-    # self.pickup(3.5)
-    self.pickup(75)
-    rospy.sleep(1)
-    self.rotate_to(np.pi, np.pi/2, -np.pi/2, 0)
-    rospy.sleep(5)
-    if not os.path.exists(self.saving_adr):
-        os.makedirs(self.saving_adr)
-    self.tracker.start_record(self.saving_adr + 'pos' + str(0) + '.avi')
-    self.impluse_motion([0.1, 0, 0], 0.15)
-    rospy.sleep(5)
-    # self.impluse_motion([0, 0, -0.1], 0.1)
+  #   # self.pickup(3.5)
+  #   self.pickup(75)
+  #   rospy.sleep(1)
+  #   self.rotate_to(np.pi, np.pi/2, -np.pi/2, 0)
+  #   rospy.sleep(5)
+  #   if not os.path.exists(self.saving_adr):
+  #       os.makedirs(self.saving_adr)
+  #   self.tracker.start_record(self.saving_adr + 'pos' + str(0) + '.avi')
+  #   self.impluse_motion([0.1, 0, 0], 0.15)
+  #   rospy.sleep(5)
+  #   # self.impluse_motion([0, 0, -0.1], 0.1)
     
-    # rospy.sleep(5)
-    self.tracker.end_record()
-    self.reset()
+  #   # rospy.sleep(5)
+  #   self.tracker.end_record()
+  #   self.reset()
 
   def pre_grasp(self, mat):
-    gripper.homing()
+    # gripper.homing()
+    self.reset_gripper()
     homing = self.joint_state.copy()
     self.move_to_joint(self.ur5e_arm.inverse(mat, False, q_guess=self.joint_state), 5)
     rospy.sleep(10)
     pre_grasp = self.force_torque
+    print(pre_grasp)
     self.move_to_joint(homing, 5)
     rospy.sleep(5)
     return pre_grasp
@@ -584,34 +575,38 @@ class Grasp(object):
       return self.ur5e_arm.inverse(mat, False, q_guess=joint)
 
   def ft_test(self, force = 75, joint = None):
-    gripper.homing()
+    # gripper.homing()
+    self.reset_gripper()
     if joint is None:
        joint = self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state)
     up_joint = self.up_joint(joint)
     self.move_to_joint(up_joint, 5)
     rospy.sleep(5)
     
-    new_rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
+    # new_rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
     cur_pos = self.ur5e_arm.forward(up_joint, 'matrix')
-    cur_pos[:3,:3] = new_rot
+    # cur_pos[:3,:3] = new_rot
     cur_pos[2,3]= 0.45
     new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=up_joint)
 
     pre_grasp = self.pre_grasp(cur_pos)
-    self.pickup(75, joint = joint)
+    ref_gel = self.pickup(75, joint = joint)
     self.move_to_joint(new_state, 5)
     rospy.sleep(10)
     post_grasp = self.force_torque
+    gel_marker = self.marker_gelsight.read()
+    print(post_grasp)
     # print(pre_grasp, post_grasp)
-    print(post_grasp - pre_grasp)
+    # print(post_grasp - pre_grasp)
     total_force = np.linalg.norm(post_grasp[:3] - pre_grasp[:3])
-    print(total_force)
+    # print(total_force)
     
     rospy.sleep(5)
     self.move_to_joint(joint, 5)
     rospy.sleep(5)
-    gripper.homing()
-    return post_grasp - pre_grasp
+    # gripper.homing()
+    self.reset_gripper()
+    return post_grasp - pre_grasp, gel_marker, ref_gel
 
   def ypr_to_mat(self, yaw, pitch, roll):
     return np.array([[np.cos(yaw)*np.cos(pitch), np.cos(yaw)*np.sin(pitch)*np.sin(roll)-np.sin(yaw)*np.cos(roll), np.cos(yaw)*np.sin(pitch)*np.cos(roll)+np.sin(yaw)*np.sin(roll)],
@@ -628,7 +623,7 @@ class Grasp(object):
   
   def move_away(self):
 
-    gripper.homing()
+    self.reset_gripper()
 
     cur_loc = self.ur5e_arm.forward(self.joint_state, 'matrix')
     cur_loc[2,3] = 0.5
@@ -638,12 +633,88 @@ class Grasp(object):
     rospy.sleep(5.5)
 
     away_joint = new_joint[:]
-    away_joint[0] = 0.5
+    away_joint[0] = 2.4
 
     self.move_to_joint(away_joint, 5)
     rospy.sleep(5.5)
 
+  def save_data(self, force, loc, marker, marker_ref, testid = 0):
+    save_dict = {'force': force, 'loc': loc}
+    saving_adr = self.saving_adr + 'raw_data/'+ str(testid) + '/'
+    if not os.path.exists(saving_adr):
+        os.makedirs(saving_adr)
+    np.save(saving_adr + 'data.npy', save_dict)
+    np.savetxt(saving_adr + 'loc.txt', loc)
+    cv2.imwrite(saving_adr + 'marker.png', marker)
+    cv2.imwrite(saving_adr + 'marker_ref.png', marker_ref)
+
   def CoM_estimation(self, testid = 0):
+    rospy.sleep(1)
+    self.move_away()
+    frame = self.overhead_cam.read()
+    main_tag, main_center, CoM = CoM_calulation(frame)
+    # height = np.random.uniform(0.232, 0.282)
+    height = CoM[2] + 0.05
+    if main_tag == 0:
+      offset = np.random.uniform(-0.07, 0.07)
+      
+      move_loc = np.array([main_center[0] + offset, main_center[1], height])
+      rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
+    elif main_tag == 1:
+      side = np.random.randint(0, 2)
+      if side == 0:
+        offset = np.random.uniform(-0.055, 0.045)
+        move_loc = np.array([main_center[0] + offset, main_center[1] - 0.075, height])
+        rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
+      elif side == 1:
+        offset = np.random.uniform(-0.055, 0.045)
+        move_loc = np.array([main_center[0] + offset, main_center[1] + 0.075, height])
+        rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
+      elif side == 2:
+        offset = np.random.uniform(-0.05, 0.05)
+        move_loc = np.array([main_center[0] - 0.075, main_center[1] + offset, height])
+        rot = self.ypr_to_mat(-np.pi/2, 2e-3, np.pi)
+        CoM = CoM[:2][::-1]
+      elif side == 3:
+        offset = np.random.uniform(-0.05, 0.05)
+        move_loc = np.array([main_center[0] +0.075, main_center[1] + offset, height])
+        rot = self.ypr_to_mat(-np.pi/2, 2e-3, np.pi)
+        CoM = CoM[:2][::-1]
+      print('main_tag: ' + str(main_tag) + ' side: ' + str(side))
+
+    GT = move_loc - CoM
+    print(GT, CoM, main_tag, main_center)
+    robot_mat = self.loc2mat(move_loc, rot)
+    new_joint = self.ur5e_arm.inverse(robot_mat, False, q_guess=self.joint_state)
+    x, gel_marker, ref_gel = self.ft_test(joint = new_joint)
+    self.save_data(x, GT, gel_marker,ref_gel, testid)
+
+    # img_tag, tagID = detect_tag()
+    # robot_loc = img2robot(img_tag)
+    # if tagID == 6:
+    #   robot_loc[0] -= 0.075
+    #   robot_loc[1] -= 0.075
+    #   robot_loc[2] = 0.234 
+    # GT = robot_loc.copy()
+    # robot_mat = self.loc2mat(GT)
+    # new_joint = self.ur5e_arm.inverse(robot_mat, False, q_guess=self.joint_state)
+    # x = self.ft_test(joint = new_joint)
+    # print(GT)
+    # random_offset = np.random.uniform(-0.1, 0.1)
+    # robot_loc[0] += random_offset
+    # print(robot_loc)
+    # robot_mat = self.loc2mat(robot_loc)
+    # new_joint = self.ur5e_arm.inverse(robot_mat, False, q_guess=self.joint_state)
+    # x = self.ft_test(joint = new_joint)
+    # GT = robot_loc - GT
+    # save_dict = {'GT': GT, 'force': x}
+    # print(GT, x)
+    # if not os.path.exists(self.saving_adr):
+    #     os.makedirs(self.saving_adr)
+    # np.save(self.saving_adr + 'data' + str(testid) + '.npy', save_dict)
+
+
+  def CoM_verify(self, testid = 0):
     rospy.sleep(1)
     self.move_away()
     img_tag, tagID = detect_tag()
@@ -654,29 +725,40 @@ class Grasp(object):
       robot_loc[2] = 0.23
     elif tagID == 3:
       robot_loc[2] = 0.23
+    elif tagID == 7:
+      robot_loc[2] = 0.23
+    elif tagID == 0:
+      robot_loc[2] = 0.25
     GT = robot_loc.copy()
-    print(GT)
-    # if tagID == 2:
-    #   random_offset = 0
-    #   while abs(random_offset) < 0.06:
-    #     random_offset = np.random.uniform(-0.25, 0.25)
-    # else:
-    #   
-    random_offset = np.random.uniform(-0.1, 0.1)
+    # print(GT)
+    if tagID == 7:
+      rand_idx = np.random.randint(0, 2)
+      if rand_idx == 0:
+        random_offset = np.random.uniform(0.03, 0.06)
+      elif rand_idx == 1:
+        random_offset = np.random.uniform(-0.03, -0.1)
+    else:
+      random_offset = np.random.uniform(-0.1, 0.1)
     robot_loc[0] += random_offset
-    print(robot_loc)
+    # print(robot_loc)
     robot_mat = self.loc2mat(robot_loc)
     new_joint = self.ur5e_arm.inverse(robot_mat, False, q_guess=self.joint_state)
     x = self.ft_test(joint = new_joint)
     GT = robot_loc - GT
     save_dict = {'GT': GT, 'force': x}
-    print(GT, x)
-    if not os.path.exists(self.saving_adr):
-        os.makedirs(self.saving_adr)
-    np.save(self.saving_adr + 'data' + str(testid) + '.npy', save_dict)
+    print(save_dict)
+    pred = self.model(torch.tensor(x).float())/1000
+    pred = pred.detach().numpy()
+    nn_diff = pred[0] - GT[0]
+    analyical_sol = x[3] / x[2]
+    analyical_diff = analyical_sol - GT[0]
+    print('NN_diff: ' + str(nn_diff) + ' Analytical_diff: ' + str(analyical_diff))
+    return abs(nn_diff), abs(analyical_diff)
+    
+    
 
-  def force_torque_data(self):
-    for i in range(100):
+  def data_collection_main(self):
+    for i in range(20):
       self.CoM_estimation(i)
     
     # overall = []
@@ -694,24 +776,32 @@ class Grasp(object):
 if __name__ == '__main__':
   rospy.init_node('grasp')
   rospy.sleep(1)
+  rospy.Rate(15)
   # np.random.seed(42)
   Grasp_ = Grasp(record=False)
+  # Grasp_.showcamera()
+  Grasp_.data_collection_main()
 
 
-  Grasp_.force_torque_data()
-  # Grasp_.CoM_estimation()
+  # Grasp_.force_torque_data()
+  # Grasp_.reset()
+  # sum_nn = 0
+  # sum_an = 0
+  # for i in range(10):
+  #   nn,an = Grasp_.CoM_verify()
+  #   sum_nn += nn
+  #   sum_an += an
+  # print('NN: ' + str(sum_nn/10) + ' Analytical: ' + str(sum_an/10))
+  # Grasp_.CoM_verify()
+  # while True:
+  #   pass
   # Grasp_.ft_test()
-  
+  # Grasp_.CoM_estimation()
 #   Grasp_.test2()
 #   print(forward_kinematic(Grasp_.joint_state))
-#   Grasp_.pickup()
-#   cap.release()
-#   print(1)
-  # Grasp_.showcamera()
-  # Grasp_.reset()
-  
-  # rospy.sleep(2)
+# Grasp_.reset_gripper()
+  # Grasp_.pickup()
+
 #   Grasp_.test_rot()
   # Grasp_.test()
   # Grasp_.test2()
-  

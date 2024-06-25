@@ -27,19 +27,29 @@ class Net(nn.Module):
 class HapticDataset(Dataset):
     def __init__(self, root_dir):
         self.root_dir = root_dir
-        self.data_files = []
+        self.data = []
         dirlist = os.listdir(root_dir)
         for run in dirlist:
             run_dir = os.path.join(root_dir, run)
-            files = [os.path.join(run_dir, f) for f in os.listdir(run_dir) if f.endswith('.npy')]
-            self.data_files.extend(files)
+            for file in os.listdir(run_dir):
+                data_file = os.path.join(run_dir, file)
+            
+                data = np.load(data_file, allow_pickle=True, encoding= 'latin1').item()
+                self.data.append(data)
+                # print(data)
     
     def __len__(self):
-        return len(self.data_files)
+        return len(self.data)
     
     def __getitem__(self, idx):
-        file_path = self.data_files[idx]
-        data = np.load(file_path, allow_pickle=True)
-        y = torch.tensor(data[0], dtype=torch.float32)
-        x = torch.tensor(data[1], dtype=torch.float32)
+        item = self.data[idx]
+        y = item['GT']
+        x = item['force']
+        x = torch.tensor(x).float()
+        y = torch.tensor(y).float()*1000
         return x, y
+    
+
+
+
+# HapticDataset('/media/okemo/extraHDD31/samueljin/haptic_data')
