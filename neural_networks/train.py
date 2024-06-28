@@ -2,14 +2,16 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from nn_helpers import Net, HapticDataset
-
-root_dir = '/media/okemo/extraHDD31/samueljin/haptic_data'
-
+from nn_helpers import Net, HapticDataset, GelResNet, GelSightDataset
+import tqdm
+root_dir = '/media/okemo/extraHDD31/samueljin/CoM_dataset'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
 # Create dataset and dataloader
-dataset = HapticDataset(root_dir)
+# dataset = HapticDataset(root_dir)
+dataset = GelSightDataset(root_dir)
 dataloader = DataLoader(dataset, batch_size=32, shuffle=True, num_workers=4)
-model = Net()
+model = GelResNet().to(device)
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=0.002)
 
@@ -18,6 +20,7 @@ lowest_loss = 1000
 for epoch in range(100):  # Number of epochs
     for i, (inputs, targets) in enumerate(dataloader):
         # Forward pass
+        inputs = inputs.to(device)
         outputs = model(inputs)
         
         # Compute the loss

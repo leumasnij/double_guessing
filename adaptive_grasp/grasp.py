@@ -590,11 +590,11 @@ class Grasp(object):
     new_state = self.ur5e_arm.inverse(cur_pos, False, q_guess=up_joint)
 
     pre_grasp = self.pre_grasp(cur_pos)
-    ref_gel = self.pickup(75, joint = joint)
+    ref_gel = self.pickup(75, joint = joint)[1]
     self.move_to_joint(new_state, 5)
     rospy.sleep(10)
     post_grasp = self.force_torque
-    gel_marker = self.marker_gelsight.read()
+    gel_marker = self.marker_gelsight.read()[1]
     print(post_grasp)
     # print(pre_grasp, post_grasp)
     # print(post_grasp - pre_grasp)
@@ -648,11 +648,10 @@ class Grasp(object):
     cv2.imwrite(saving_adr + 'marker.png', marker)
     cv2.imwrite(saving_adr + 'marker_ref.png', marker_ref)
 
-  def CoM_estimation(self, testid = 0):
+  def CoM_estimation(self, num_tag, testid = 0):
     rospy.sleep(1)
     self.move_away()
-    frame = self.overhead_cam.read()
-    main_tag, main_center, CoM = CoM_calulation(frame)
+    main_tag, main_center, CoM = CoM_calulation(self.overhead_cam, num_tag)
     # height = np.random.uniform(0.232, 0.282)
     height = CoM[2] + 0.05
     if main_tag == 0:
@@ -758,8 +757,9 @@ class Grasp(object):
     
 
   def data_collection_main(self):
-    for i in range(20):
-      self.CoM_estimation(i)
+    num_tag = int(input("How many tags are there?"))
+    for i in range(10):
+      self.CoM_estimation(num_tag, i)
     
     # overall = []
     # for i in range(10):

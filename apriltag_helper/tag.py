@@ -37,15 +37,17 @@ def detect_tag():
                 tag_center.append([(corners[0][0] + corners[2][0]) / 2, (corners[0][1] + corners[2][1]) / 2])
             return np.mean(tag_center, axis=0), tag.tag_id
 # print(detect_tag())
-def CoM_calulation(frame = None):
-    if frame is None:
-        cap = cv2.VideoCapture(8)
+def CoM_calulation(cap, num_tag):
+    
+    enought_tag = False
+    while not enought_tag:
         ret, frame = cap.read()
-        cap.release()
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    options = apriltag.DetectorOptions(families='tag25h9')
-    detector = apriltag.Detector(options)
-    tags = detector.detect(gray)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        options = apriltag.DetectorOptions(families='tag25h9')
+        detector = apriltag.Detector(options)
+        tags = detector.detect(gray)
+        if len(tags) == num_tag:
+            enought_tag = True
     main_tag = None
     main_center = np.zeros(3)
 
@@ -93,6 +95,16 @@ def CoM_calulation(frame = None):
             weight = 161.29
             CoM = (CoM*total_weight + Obj_CoM*weight)/(total_weight + weight)
             total_weight += weight
+        if tag.tag_id == 8:
+            Obj_CoM = np.array([center[0], center[1], 0.23])
+            weight = 200
+            CoM = (CoM*total_weight + Obj_CoM*weight)/(total_weight + weight)
+            total_weight += weight
+        if tag.tag_id == 9:
+            Obj_CoM = np.array([center[0], center[1], 0.23])
+            weight = 500
+            CoM = (CoM*total_weight + Obj_CoM*weight)/(total_weight + weight)
+            total_weight += weight
     
     
     return main_tag, main_center, CoM
@@ -116,7 +128,7 @@ def robot2img(robot_pos):
 
 def verification():
 # Initialize the camera
-    cap = cv2.VideoCapture(8)
+    cap = cv2.VideoCapture(0)
 
     # Initialize the apriltag detector
     options = apriltag.DetectorOptions(families='tag25h9')
@@ -136,7 +148,7 @@ def verification():
         
         # Draw detections on the frame
         
-        main_id, main_center, CoM = CoM_calulation(frame)
+        main_id, main_center, CoM = CoM_calulation(cap, 3)
         main_center = robot2img(main_center)[:2].astype(int)
         CoM = robot2img(CoM).astype(int)
         # print(main_center, CoM)

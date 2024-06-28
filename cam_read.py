@@ -52,7 +52,7 @@ class CameraCapture(object):
                 self.out.write(self.frame)
 
     def read(self):
-        return self.frame.copy()
+        return self.ret, self.frame.copy()
     def start_record(self, out_adr):
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
         self.out = cv2.VideoWriter(out_adr, fourcc, 10.0, self.frame.shape[1::-1])
