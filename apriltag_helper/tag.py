@@ -106,7 +106,7 @@ def CoM_calulation(cap, num_tag):
             CoM = (CoM*total_weight + Obj_CoM*weight)/(total_weight + weight)
             total_weight += weight
     
-    
+    cv2.imwrite('frame.jpg', frame)
     return main_tag, main_center, CoM
 
 

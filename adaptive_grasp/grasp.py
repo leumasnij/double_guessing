@@ -758,7 +758,7 @@ class Grasp(object):
 
   def data_collection_main(self):
     num_tag = int(input("How many tags are there?"))
-    for i in range(10):
+    for i in range(20):
       self.CoM_estimation(num_tag, i)
     
     # overall = []
