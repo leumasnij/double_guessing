@@ -2,18 +2,18 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from nn_helpers import Net, HapticDataset, GelResNet, GelSightDataset, GelDifDataset, GelRefDataset, GelHapDataset, GelHapResNet, RegNet, GelRefResNet
+from nn_helpers import Net, HapticDataset, GelResNet, GelSightDataset, GelDifDataset, GelRefDataset, GelHapDataset, GelHapResNet, RegNet, GelRefResNet, GelHapLite, HapNetWithUncertainty, HapticLoss
 from tqdm import tqdm
 import argparse
 argparser = argparse.ArgumentParser()
 argparser.add_argument('--model', '-m', type=str)
 model_name = argparser.parse_args().model
 epochs = 50
-torch.manual_seed(3407)
+# torch.manual_seed(3407)
 root_dir = '/media/okemo/extraHDD31/samueljin/CoM_dataset'
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(device)
-
+criterion = nn.MSELoss()
 if model_name == 'gel':
     dataset = GelSightDataset(root_dir)
     model = GelResNet().to(device)
@@ -34,6 +34,15 @@ elif model_name == 'gelhap':
     dataset = GelHapDataset(root_dir)
     model = GelHapResNet().to(device)
     save_path = '/media/okemo/extraHDD31/samueljin/Model/gelhap'
+elif model_name == 'gelhaplite':
+    dataset = GelHapDataset(root_dir)
+    model = GelHapLite().to(device)
+    save_path = '/media/okemo/extraHDD31/samueljin/Model/gelhaplite'
+elif model_name == 'hap_uncertain':
+    dataset = HapticDataset(root_dir)
+    model = HapNetWithUncertainty(input_size=6).to(device)
+    save_path = '/media/okemo/extraHDD31/samueljin/Model/hap_uncertain'
+    criterion = HapticLoss
 train_size = int(0.8 * len(dataset))
 test_size = len(dataset) - train_size
 train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_size, test_size])
@@ -41,12 +50,13 @@ train_loader = DataLoader(train_dataset, batch_size=48, shuffle=True, num_worker
 val_loader = DataLoader(test_dataset, batch_size=48, shuffle=True, num_workers=4)
 # dataloader = DataLoader(dataset, batch_size=48, shuffle=True, num_workers=4)
 
-criterion = nn.MSELoss()
-optimizer = optim.RAdam(model.parameters(), lr=0.002)
+
+optimizer = optim.SGD(model.parameters(), lr=0.02)
+# optimizer = optim.RAdam(model.parameters(), lr=60e-4)
 
 lowest_loss = 1000
 # Example of using the dataloader in a training loop
-if model_name == 'gelhap':
+if model_name == 'gelhap' or model_name == 'gelhaplite':
     cum_loss = 0
     for epoch in range(epochs):  # Number of epochs
         cum_loss = 0
@@ -64,6 +74,7 @@ if model_name == 'gelhap':
                 loss.backward()
                 optimizer.step()
                 cum_loss += loss.item()
+                pbar.set_postfix(loss=loss.item())
                 pbar.update(1)
         cum_loss /= len(train_loader)
         print(f"Epoch {epoch+1} loss: {cum_loss}")
@@ -103,7 +114,7 @@ else:
                 optimizer.step()
                 cum_loss += loss.item()
                 
-                if (i+1) % 10 == 0:  # Print loss every 10 batches
+                if (i+1) % 1 == 0:  # Print loss every 10 batches
                     pbar.set_postfix(loss=loss.item())
                 
                 pbar.update(1)

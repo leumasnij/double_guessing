@@ -202,6 +202,25 @@ class Grasp(object):
 
 
 
+  def inti_model(self):
+      self.gel_model = nnh.GelResNet()
+      self.gel_model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/gel_best_model.pth'))
+      self.gel_model.eval()
+      self.hap_model = nnh.RegNet(input_size=6)
+      self.hap_model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/hap_best_model.pth'))
+      self.hap_model.eval()
+      self.ref_model = nnh.GelRefResNet()
+      self.ref_model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/ref_best_model.pth'))
+      self.ref_model.eval()
+      self.diff_model = nnh.GelResNet()
+      self.diff_model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/dif_best_model.pth'))
+      self.diff_model.eval()
+      self.gelhap_model = nnh.GelHapResNet()
+      self.gelhap_model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/gelhap_best_model.pth'))
+      self.gelhap_model.eval()
+
+
+
   def showcamera(self):
     while True:
         rs_frame = self.realsense.get_frame()
@@ -648,7 +667,7 @@ class Grasp(object):
     cv2.imwrite(saving_adr + 'marker.png', marker)
     cv2.imwrite(saving_adr + 'marker_ref.png', marker_ref)
 
-  def CoM_estimation(self, num_tag, testid = 0):
+  def CoM_estimation(self, num_tag, testid = 0, save = True):
     rospy.sleep(1)
     self.move_away()
     main_tag, main_center, CoM = CoM_calulation(self.overhead_cam, num_tag)
@@ -686,8 +705,9 @@ class Grasp(object):
     robot_mat = self.loc2mat(move_loc, rot)
     new_joint = self.ur5e_arm.inverse(robot_mat, False, q_guess=self.joint_state)
     x, gel_marker, ref_gel = self.ft_test(joint = new_joint)
-    self.save_data(x, GT, gel_marker,ref_gel, testid)
-
+    if save:
+      self.save_data(x, GT, gel_marker,ref_gel, testid)
+    return GT, x, gel_marker, ref_gel
     # img_tag, tagID = detect_tag()
     # robot_loc = img2robot(img_tag)
     # if tagID == 6:
@@ -754,7 +774,31 @@ class Grasp(object):
     print('NN_diff: ' + str(nn_diff) + ' Analytical_diff: ' + str(analyical_diff))
     return abs(nn_diff), abs(analyical_diff)
     
-    
+  def online_test(self):
+    self.inti_model()
+    num_tag = int(input("How many tags are there?"))
+    gel_offset = np.array([0.0, 0.0])
+    haptic_offset = np.array([0.0, 0.0])
+    ref_offset = np.array([0.0, 0.0])
+    gelhap_offset = np.array([0.0, 0.0])
+    for i in range(10):
+      GT, hap, gel_marker, ref_gel = self.CoM_estimation(num_tag, i, save=False)
+      GT = GT[:2]*100
+      gel_marker = cv2.resize(gel_marker, (640,480))/255.0
+      ref_gel = cv2.resize(ref_gel, (640,480))/255.0
+      ref_gel = cv2.concatenate((gel_marker, ref_gel), axis=1)
+      gel_marker = torch.tensor(gel_marker).unsqueeze(0).unsqueeze(0).float()
+      ref_gel = torch.tensor(ref_gel).unsqueeze(0).unsqueeze(0).float()
+      hap = torch.tensor(hap).unsqueeze(0).float()
+      gel_offset += self.gel_model(gel_marker).detach().numpy()[0]
+      haptic_offset += self.hap_model(hap).detach().numpy()[0]
+      ref_offset += self.ref_model(ref_gel).detach().numpy()[0]
+      gelhap_offset += self.gelhap_model(ref_gel, hap).detach().numpy()[0]
+      print('Gel: ' + str(gel_offset/i+1) + ' Hap: ' + str(haptic_offset/i+1) + ' Ref: ' + str(ref_offset/i+1) + ' Gelhap: ' + str(gelhap_offset/i+1))
+
+
+
+
 
   def data_collection_main(self):
     num_tag = int(input("How many tags are there?"))
@@ -780,7 +824,8 @@ if __name__ == '__main__':
   # np.random.seed(42)
   Grasp_ = Grasp(record=False)
   # Grasp_.showcamera()
-  Grasp_.data_collection_main()
+  # Grasp_.data_collection_main()
+  Grasp_.online_test()
 
 
   # Grasp_.force_torque_data()

@@ -30,11 +30,15 @@ gel_offset = [0,0]
 haptic_offset = [0,0]
 ref_offset = [0,0]
 gelhap_offset = [0,0]
+diff_offset = [0,0]
 for test in test_lists:
     img = cv2.imread(os.path.join(test, 'marker.png'))
-    img = cv2.resize(img, (480, 640))
+    img = cv2.resize(img, (480, 640))/255.0
     ref = cv2.imread(os.path.join(test, 'marker_ref.png'))
-    ref = cv2.resize(ref, (480, 640))
+    ref = cv2.resize(ref, (480, 640))/255.0
+    imgdiff = img - ref
+    imgdiff = torch.tensor(imgdiff).float()
+    imgdiff = imgdiff.permute(2, 0, 1)
     imgref = np.concatenate((img, ref), axis=2)
     imgref = torch.tensor(imgref).float()
     imgref = imgref.permute(2, 0, 1)
@@ -54,6 +58,14 @@ for test in test_lists:
         loc_pred = model(img.unsqueeze(0).to(device))
         print('Gel: ', loc_pred.cpu().numpy())
         gel_offset += np.abs(loc - loc_pred.cpu().numpy())
+    
+    model = GelResNet().to(device)
+    model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/dif_best_model.pth'))
+    model.eval()
+    with torch.no_grad():
+        loc_pred = model(imgdiff.unsqueeze(0).to(device))
+        print('Diff: ', loc_pred.cpu().numpy())
+        diff_offset += np.abs(loc - loc_pred.cpu().numpy())
     model = RegNet(input_size=6).to(device)
     model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/hap_best_model.pth'))
     model.eval()
@@ -76,12 +88,13 @@ for test in test_lists:
         print('GelHap: ', loc_pred.cpu().numpy())
         gelhap_offset += np.abs(loc - loc_pred.cpu().numpy())
 
+
 print('Average offset:')
 print('Gel: ', gel_offset/test_size)
 print('Haptic: ', haptic_offset/test_size)
 print('Ref: ', ref_offset/test_size)
 print('GelHap: ', gelhap_offset/test_size)
-    
+print('Diff: ', diff_offset/test_size)
     
 
 
