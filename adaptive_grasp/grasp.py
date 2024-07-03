@@ -786,7 +786,7 @@ class Grasp(object):
       GT = GT[:2]*100
       gel_marker = cv2.resize(gel_marker, (640,480))/255.0
       ref_gel = cv2.resize(ref_gel, (640,480))/255.0
-      ref_gel = cv2.concatenate((gel_marker, ref_gel), axis=1)
+      ref_gel = np.concatenate((gel_marker, ref_gel), axis=1)
       gel_marker = torch.tensor(gel_marker).unsqueeze(0).unsqueeze(0).float()
       ref_gel = torch.tensor(ref_gel).unsqueeze(0).unsqueeze(0).float()
       hap = torch.tensor(hap).unsqueeze(0).float()
