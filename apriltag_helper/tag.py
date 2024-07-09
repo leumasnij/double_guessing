@@ -230,7 +230,7 @@ def CoM_calulation(cap, num_tag):
             weight = 200
             CoM = (CoM*total_weight + Obj_CoM*weight)/(total_weight + weight)
             total_weight += weight
-            no_grasp_zone.append([Obj_CoM[0] - 0.025, Obj_CoM[0] + 0.025, Obj_CoM[1] - 0.025, Obj_CoM[1] + 0.025, 0 , 0.272])
+            no_grasp_zone.append([Obj_CoM[0] - 0.06, Obj_CoM[0] + 0.06, Obj_CoM[1] - 0.06, Obj_CoM[1] + 0.06, 0 , 0.272])
             obj_moi = Weight_(0.2, 0.018, 0.008, 0.013, 0.22, 0.04, 0.06).moi_()
             moi = combine_moi(total_weight, 0.2, moi, obj_moi, CoM, Obj_CoM)
         if tag.tag_id == 9:
@@ -243,7 +243,7 @@ def CoM_calulation(cap, num_tag):
             weight = 100
             CoM = (CoM*total_weight + Obj_CoM*weight)/(total_weight + weight)
             total_weight += weight
-            no_grasp_zone.append([Obj_CoM[0] - 0.015, Obj_CoM[0] + 0.015, Obj_CoM[1] - 0.015, Obj_CoM[1] + 0.015, 0 , 0.265])
+            no_grasp_zone.append([Obj_CoM[0] - 0.06, Obj_CoM[0] + 0.06, Obj_CoM[1] - 0.06, Obj_CoM[1] + 0.06, 0 , 0.265])
             
     cv2.imwrite('frame.jpg', frame)
     

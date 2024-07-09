@@ -51,6 +51,12 @@ class HapNetWithUncertainty(nn.Module):
         self.fc2 = nn.Linear(256, 64) # hidden layer (12) -> hidden layer (24)
         self.fc3 = nn.Linear(64, output_size) # hidden layer (24) -> hidden layer (12)
         self.dropout = nn.Dropout(0.2)
+        nn.init.kaiming_normal_(self.fc1.weight)
+        nn.init.kaiming_normal_(self.fc2.weight)
+        nn.init.kaiming_normal_(self.fc3.weight)
+        nn.init.constant_(self.fc1.bias, 0)
+        nn.init.constant_(self.fc2.bias, 0)
+        nn.init.constant_(self.fc3.bias, 0)
 
     def forward(self, x):
         # Define the forward pass
@@ -59,15 +65,25 @@ class HapNetWithUncertainty(nn.Module):
         x = torch.relu(self.fc2(x))
         x = self.dropout(x)
         x = self.fc3(x)
-        mean = x[..., :2][..., None]
-        std = torch.clamp(x[..., 2:][..., None], min=1e-3)
-        normal = torch.distributions.Normal(mean, std)
-        return normal
+        mean1 = x[..., 0][..., None]
+        mean2 = x[..., 1][..., None]
+        std1 = torch.clamp(x[..., 2][..., None], min=1e-3)
+        std2 = torch.clamp(x[..., 3][..., None], min=1e-3)
+        normal1 = torch.distributions.Normal(mean1, std1)
+        normal2 = torch.distributions.Normal(mean2, std2)
+        # std = torch.clamp(x[..., 2:][..., None], min=1e-3)
+        # normal = torch.distributions.Normal(mean, std)
+        return [normal1, normal2]
 
 
 def HapticLoss(dist, target):
-    target = target.unsqueeze(-1)
-    return -dist.log_prob(target).mean()
+
+    dist1 = dist[0]
+    dist2 = dist[1]
+    target1 = target[..., 0][..., None]
+    target2 = target[..., 1][..., None]
+    return -dist1.log_prob(target1).mean() - dist2.log_prob(target2).mean()
+    # return -dist.log_prob(target).sum()
 
 class SmallerCNN(nn.Module):
     def __init__(self):
@@ -211,7 +227,7 @@ class HapticDataset(Dataset):
     
     def __getitem__(self, idx):
         adrr = self.data[idx]
-        adrr = os.path.join(adrr, 'data.npy')
+        # adrr = os.path.join(adrr, 'data.npy')
         dic = np.load(adrr, allow_pickle=True, encoding= 'latin1').item()
         x = dic['force']
         y = dic['loc'][:2]*100

@@ -39,6 +39,7 @@ elif model_name == 'gelhaplite':
     model = GelHapLite().to(device)
     save_path = '/media/okemo/extraHDD31/samueljin/Model/gelhaplite'
 elif model_name == 'hap_uncertain':
+    root_dir = '/media/okemo/extraHDD31/samueljin/haptic'
     dataset = HapticDataset(root_dir)
     model = HapNetWithUncertainty(input_size=6).to(device)
     save_path = '/media/okemo/extraHDD31/samueljin/Model/hap_uncertain'
@@ -51,7 +52,7 @@ val_loader = DataLoader(test_dataset, batch_size=48, shuffle=True, num_workers=4
 # dataloader = DataLoader(dataset, batch_size=48, shuffle=True, num_workers=4)
 
 
-optimizer = optim.SGD(model.parameters(), lr=0.02)
+optimizer = optim.SGD(model.parameters(), lr=0.075)
 # optimizer = optim.RAdam(model.parameters(), lr=60e-4)
 
 lowest_loss = 1000
@@ -112,6 +113,7 @@ else:
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
+
                 cum_loss += loss.item()
                 
                 if (i+1) % 1 == 0:  # Print loss every 10 batches

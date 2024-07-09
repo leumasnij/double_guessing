@@ -312,15 +312,16 @@ class Grasp(object):
     GT = move_loc - CoM
     GT = np.append(GT, moi)
     up_joint = self.up_joint(joint)
-    self.move_to_joint(up_joint, 5)
-    rospy.sleep(5)
-    self.pickup(joint=joint)
-    FT_array, rot_array = self.single_trial(size, testid)
-    self.reset(main_center, move_loc)
-    FT_array = np.array(FT_array)
-    rot_array = np.array(rot_array)
-    FT_final = self.calibration(rot_array, FT_array)
-    self.save_data(FT_final, rot_array, GT, testid)
+    for i in range(size):
+      self.move_to_joint(up_joint, 5)
+      rospy.sleep(5)
+      self.pickup(joint=joint)
+      FT_array, rot_array = self.single_trial(1, testid)
+      self.reset(main_center, move_loc)
+      FT_array = np.array(FT_array)
+      rot_array = np.array(rot_array)
+      FT_final = self.calibration(rot_array, FT_array)
+      self.save_data(FT_final, rot_array, GT, testid)
     
     
   
@@ -381,7 +382,7 @@ if __name__ == '__main__':
   Grasp_ = Grasp(record=False)
   rospy.sleep(1)
   # Grasp_.showcamera()
-  Grasp_.data_collection_main(30,10)
+  Grasp_.data_collection_main(30,5)
   # Grasp_.pickup()
   # Grasp_.reset(np.array([0.0, 0.6, 0.245]), np.array([0.0, 0.6, 0.245]))
   # Grasp_.yawpitchroll_from_joint()
