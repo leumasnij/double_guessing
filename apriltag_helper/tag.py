@@ -245,7 +245,7 @@ def CoM_calulation(cap, num_tag):
             total_weight += weight
             no_grasp_zone.append([Obj_CoM[0] - 0.06, Obj_CoM[0] + 0.06, Obj_CoM[1] - 0.06, Obj_CoM[1] + 0.06, 0 , 0.265])
             
-    cv2.imwrite('frame.jpg', frame)
+    # cv2.imwrite('frame.jpg', frame)
     
     return main_tag, main_center, CoM, no_grasp_zone, moi
         

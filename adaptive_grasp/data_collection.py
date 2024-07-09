@@ -98,7 +98,7 @@ class Grasp(object):
       cap = cv2.VideoCapture(i)
       ret, frame = cap.read()
       if ret:
-          cv2.imwrite(str(i) + '.jpg', frame)
+          # cv2.imwrite(str(i) + '.jpg', frame)
           file = 'video' + str(i)
           real_file = os.path.realpath("/sys/class/video4linux/" + file + "/name")
           with open(real_file, "rt") as name_file:
