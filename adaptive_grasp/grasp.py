@@ -120,7 +120,7 @@ class Grasp(object):
     
     self.ur5e_arm = ur_kinematics.URKinematics('ur5e')
     self.model = nnh.Net()
-    self.model.load_state_dict(torch.load('/home/okemo/samueljin/stablegrasp_ws/src/best_model.pth'))
+    # self.model.load_state_dict(torch.load('/home/okemo/samueljin/stablegrasp_ws/src/best_model.pth'))
     # torch.load('/home/okemo/samueljin/stablegrasp_ws/src/best_model.pth')
     self.model.eval()
     # self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
@@ -172,10 +172,10 @@ class Grasp(object):
 
     #cameras
     # self.realsense = RealSenseCam()
-    self.overhead_cam = None
-    self.marker_gelsight = None
-    self.unmarker_gelsight = None
-    self.init_cam()
+    # self.overhead_cam = None
+    # self.marker_gelsight = None
+    # self.unmarker_gelsight = None
+    # self.init_cam()
 
 
   def init_cam(self):
@@ -827,8 +827,8 @@ if __name__ == '__main__':
   Grasp_ = Grasp(record=False)
   # Grasp_.showcamera()
   # Grasp_.data_collection_main()
-  Grasp_.online_test()
-
+  # Grasp_.online_test()
+  # Grasp_.move_away()
 
   # Grasp_.force_torque_data()
   # Grasp_.reset()

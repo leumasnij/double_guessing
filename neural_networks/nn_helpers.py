@@ -230,7 +230,7 @@ class HapticDataset(Dataset):
         # adrr = os.path.join(adrr, 'data.npy')
         dic = np.load(adrr, allow_pickle=True, encoding= 'latin1').item()
         x = dic['force']
-        y = dic['loc'][:2]*100
+        y = dic['loc']*100
         x = torch.tensor(x).float()
         y = torch.tensor(y).float()
         
@@ -345,4 +345,73 @@ class GelHapDataset(Dataset):
         hap = torch.tensor(hap).float()
         y = torch.tensor(y).float()
         return x,hap, y
-# HapticDataset('/media/okemo/extraHDD31/samueljin/haptic_data')
+
+class HapDatasetFromTwoPos(Dataset):
+    def __init__(self, root_dir):
+        self.root_dir = root_dir
+        self.data = []
+        dirlist = os.listdir(root_dir)
+        for run in dirlist:
+            dataset_length = len(os.listdir(os.path.join(root_dir, run)))
+            ref_file_name = 'data' + str(dataset_length-1) + '.npy'
+            ref_force = np.load(os.path.join(root_dir, run, ref_file_name), allow_pickle=True, encoding= 'latin1').item()['force'][:6]
+            # print(np.load(os.path.join(root_dir, run, ref_file_name), allow_pickle=True, encoding= 'latin1').item()['GT'])
+            # print(ref_force)
+            if sum(ref_force) == 0:
+                # print('skipping ' + os.path.join(root_dir, run, ref_file_name))
+                continue
+            for data in os.listdir(os.path.join(root_dir, run)):
+                if data == ref_file_name:
+                    # print('skipping ' + os.path.join(root_dir, run, data))
+                    continue
+                run_dir = os.path.join(root_dir, run, data)
+                dict_ = np.load(run_dir, allow_pickle=True, encoding= 'latin1').item()
+                if sum(dict_['force'][:6]) == 0:
+                    # print('skipping ' + run_dir)
+                    continue
+                
+                dict_['force'] = np.concatenate((ref_force, dict_['force']))
+                self.data.append(dict_)
+                
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        dict_ = self.data[idx]
+        # print(dict_)
+        x = dict_['force']
+        y = dict_['GT'][:3]*100
+        x = torch.tensor(x).float()
+        y = torch.tensor(y).float()
+        return x, y
+        
+class HapOnePos(Dataset):
+    def __init__(self, root_dir):
+        self.root_dir = root_dir
+        self.data = []
+        dirlist = os.listdir(root_dir)
+        for run in dirlist:
+            dataset_length = len(os.listdir(os.path.join(root_dir, run)))
+            for data in os.listdir(os.path.join(root_dir, run)):
+
+                run_dir = os.path.join(root_dir, run, data)
+                dict_ = np.load(run_dir, allow_pickle=True, encoding= 'latin1').item()
+                if sum(np.abs(dict_['force'][:6])) == 0:
+                    # print('skipping ' + run_dir)
+                    os.remove(run_dir)
+                    
+                    continue
+                self.data.append(dict_)
+                
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        dict_ = self.data[idx]
+        # print(dict_)
+        x = dict_['force']
+        y = dict_['GT'][:3]*100
+        x = torch.tensor(x).float()
+        y = torch.tensor(y).float()
+        return x, y
+        

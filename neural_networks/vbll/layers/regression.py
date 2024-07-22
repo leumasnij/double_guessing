@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from dataclasses import dataclass
 from vbll.utils.distributions import Normal, DenseNormal, get_parameterization
-from collections.abc import Callable
+from typing import Union, Callable, Optional
 import torch.nn as nn
 
 
@@ -16,10 +16,11 @@ def KL(p, q_scale):
 
 @dataclass
 class VBLLReturn():
-    predictive: Normal | DenseNormal # Could return distribution or mean/cov
+    predictive: Union[Normal, DenseNormal] # Could return distribution or mean/cov
     train_loss_fn: Callable[[torch.Tensor], torch.Tensor]
     val_loss_fn: Callable[[torch.Tensor], torch.Tensor]
-    ood_scores: None | Callable[[torch.Tensor], torch.Tensor] = None
+    ood_scores: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
+    # ood_scores: None | Callable[[torch.Tensor], torch.Tensor] = None
 
 
 class Regression(nn.Module):

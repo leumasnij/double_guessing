@@ -2,6 +2,28 @@ import cv2
 import apriltag
 import numpy as np
 
+def calculate_sheet_moi(length, width, thickness, mass):
+    # Principal moments of inertia
+    I_xx = (1/12) * mass * (width**2 + thickness**2)  # About X-axis
+    I_yy = (1/12) * mass * (length**2 + thickness**2)  # About Y-axis
+    I_zz = (1/12) * mass * (length**2 + width**2)      # About Z-axis
+    
+    # Products of inertia
+    I_xy = 0  # About XY plane
+    I_xz = 0  # About XZ plane
+    I_yz = 0  # About YZ plane
+
+    # Return as an array: [I_xx, I_yy, I_zz, I_xy, I_xz, I_yz]
+    return [I_xx, I_yy, I_zz, I_xy, I_xz, I_yz]
+
+def plane_with_holder_moi(length, width, thickness, height, mass):
+    sheet1_moi = calculate_sheet_moi(length, width, thickness, mass)
+    sheet2_moi = calculate_sheet_moi(length, height, thickness, mass)
+    com1 = np.array([0, 0, 0])
+    com2 = np.array([0, 0, thickness/2 + height/2])
+    overall_moi = combine_moi(mass, mass, sheet1_moi, sheet2_moi, com1, com2)
+    return overall_moi
+
 def combine_moi(mass1, mass2, moi_1, moi_2, com1, com2):
     # Calculate the combined center of mass
     total_mass = mass1 + mass2
@@ -180,6 +202,7 @@ def CoM_calulation(cap, num_tag):
     CoM = np.zeros(3)
     total_weight = 0
     tag1_lookfor2_flag = False
+    tag0_lookfor3_flag = False
     no_grasp_zone = []
     moi = np.zeros(6)
     
@@ -197,14 +220,22 @@ def CoM_calulation(cap, num_tag):
             tag1_lookfor2_flag = False
             total_weight += 185.29
             continue
+
+        if tag0_lookfor3_flag and tag.tag_id == 3:
+            CoM = np.array([(center[0]+main_center[0])/2, (center[1]+main_center[1])/2, 0.25])
+            main_center = (center + main_center)/2
+            tag1_lookfor2_flag = False
+            continue
         
         if main_tag is None and (tag.tag_id == 0 or tag.tag_id == 1):
             main_tag = tag.tag_id
             
             if tag.tag_id == 0:
                 CoM = np.array([center[0]-0.075, center[1]-0.075, 0.234])
-                total_weight = 115.62
-                main_center = center - np.array([0.075, 0.075, 0])
+                total_weight = 127.36
+                main_center = center
+                tag0_lookfor3_flag = True   
+                moi = plane_with_holder_moi(0.15, 0.15, 0.003, 0.085, 127.36)
             else:
                 CoM = np.array([center[0]+0.075, center[1]-0.075, 0.25])
                 main_center = center
@@ -285,7 +316,7 @@ def verification():
         
         # Draw detections on the frame
         
-        main_id, main_center, CoM = CoM_calulation(cap, 1)
+        main_id, main_center, CoM, ngz, moi = CoM_calulation(cap, 2)
         main_center = robot2img(main_center)[:2].astype(int)
         CoM = robot2img(CoM).astype(int)
         # print(main_center, CoM)
@@ -304,6 +335,7 @@ def verification():
             # cv2.putText(frame, str(robot_pos), (int(corners[0][0]), int(corners[0][1] - 20)), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         cv2.putText(frame, 'main id: ' + str(main_id), (int(main_center[0]), int(main_center[1])), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
         cv2.circle(frame, (int(CoM[0]), int(CoM[1])), 5, (0, 0, 255), 1)
+        cv2.circle(frame, (int(main_center[0]), int(main_center[1])), 5, (0, 0, 255), 1)
         cv2.imshow('frame', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break

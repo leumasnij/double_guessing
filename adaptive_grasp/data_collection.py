@@ -157,11 +157,11 @@ class Grasp(object):
     self.pos_controller.publish(pos_message)
   
   def reset_gripper(self):
-    gripper.move(50)
+    gripper.move(20)
 
   def grasp_part(self, force):
     gripper.set_force(force)
-    target_width = 40
+    target_width = self.gripper_width
     while self.gripper_force < 5 and target_width >=0:
       rospy.sleep(0.1)
       gripper.grasp(target_width, 60)
@@ -242,11 +242,14 @@ class Grasp(object):
 
   
   def rotate_to(self, angle1, angle2):
-    joint = self.joint_state
+    joint = self.joint_state.copy()
     joint[-1] = angle1 + self.start_angle_1
     joint[-2] = angle2 + self.start_angle_2
-    self.move_to_joint(joint, 3)
-    rospy.sleep(8)
+    max_joint = max(np.abs(joint - self.joint_state))
+    time = 1+ max_joint/np.pi *180/10
+    print('Time: ' + str(time))
+    self.move_to_joint(joint, time)
+    rospy.sleep(time+4)
   
   def single_trial(self, size = 20, testid = 0):
     loc = self.ur5e_arm.forward(self.joint_state, 'matrix')[:3,3]
@@ -312,16 +315,27 @@ class Grasp(object):
     GT = move_loc - CoM
     GT = np.append(GT, moi)
     up_joint = self.up_joint(joint)
+    print('Main Center: ' + str(main_center) + ' Move Loc: ' + str(move_loc))
     for i in range(size):
+      testid2 = i + testid*size
       self.move_to_joint(up_joint, 5)
       rospy.sleep(5)
       self.pickup(joint=joint)
-      FT_array, rot_array = self.single_trial(1, testid)
-      self.reset(main_center, move_loc)
+      FT_array, rot_array = self.single_trial(1, testid2)
+      if i == size - 1:
+        self.reset(main_center, move_loc)
+      else:
+        self.move_to_joint(up_joint, 5)
+        rospy.sleep(5)
+        self.move_to_joint(joint, 5)
+        rospy.sleep(5)
+        self.reset_gripper()
+        self.move_to_joint(up_joint, 2)
+        rospy.sleep(2)
       FT_array = np.array(FT_array)
       rot_array = np.array(rot_array)
       FT_final = self.calibration(rot_array, FT_array)
-      self.save_data(FT_final, rot_array, GT, testid)
+      self.save_data(FT_final, rot_array, GT, testid2)
     
     
   
@@ -382,7 +396,8 @@ if __name__ == '__main__':
   Grasp_ = Grasp(record=False)
   rospy.sleep(1)
   # Grasp_.showcamera()
-  Grasp_.data_collection_main(30,5)
+  # Grasp_.move_away()
+  Grasp_.data_collection_main(30,10)
   # Grasp_.pickup()
   # Grasp_.reset(np.array([0.0, 0.6, 0.245]), np.array([0.0, 0.6, 0.245]))
   # Grasp_.yawpitchroll_from_joint()
