@@ -1,3 +1,4 @@
+import os
 import torch
 import vbll
 import torch.nn as nn
@@ -52,7 +53,7 @@ def BNN_pretrained(x, y = None):
     pretrained_model = RegNet(input_size=8, output_size=3)
     pretrained_model.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/RegNetOnePos_model.pth'))
     pretrained_model = pretrained_model.to(x.device)
-    prior_scale = 0.01
+    prior_scale = 1.
     fc1_weight_prior = dist.Normal(pretrained_model.fc1.weight, torch.ones_like(pretrained_model.fc1.weight) * prior_scale)
     fc1_bias_prior = dist.Normal(pretrained_model.fc1.bias, torch.ones_like(pretrained_model.fc1.bias) * prior_scale)
     fc2_weight_prior = dist.Normal(pretrained_model.fc2.weight, torch.ones_like(pretrained_model.fc2.weight) * prior_scale)
@@ -99,7 +100,7 @@ def train_bnn(train_loader, num_epochs=5):
     mcmc.run(x, y)
     
     posterior_samples = mcmc.get_samples()
-    torch.save(posterior_samples, '/media/okemo/extraHDD31/samueljin/Model/bnn3_best_model.pth')
+    torch.save(posterior_samples, '/media/okemo/extraHDD31/samueljin/Model/bnn4_best_model.pth')
     
     from pyro.infer import Predictive
     # model.eval()
@@ -116,7 +117,7 @@ def train_bnn(train_loader, num_epochs=5):
     for i in range(len(x)):
         error = torch.abs(mean[i] - y[i]).cpu().detach().numpy()
         Total_error += error
-        if i % 100 == 0:
+        if i % 1000 == 0:
             print(f"Mean: {mean[i]}")
             print(f"error: {error}")
             print(f"Std: {std[i]}")
@@ -130,7 +131,7 @@ def train_bnn(train_loader, num_epochs=5):
     # print(ess)
 def eval_and_graph(data_loader):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    weights = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn3_best_model.pth')
+    weights = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn4_best_model.pth')
     
     deterministic_model = RegNet(input_size=8, output_size=3)
     deterministic_model.fc1.weight = nn.parameter.Parameter(weights['fc1_weight'].mean(0))
@@ -147,6 +148,8 @@ def eval_and_graph(data_loader):
     Pred = Predictive(model=BNN_pretrained, posterior_samples=weights)
     x_error,y_error,z_error = [],[],[]
     x_std, y_std, z_std = [],[],[]
+    x_00, y_00, z_00 = [],[],[]
+    
     
     for i, (x, y) in enumerate(data_loader):
         x = x.to(device)
@@ -155,7 +158,7 @@ def eval_and_graph(data_loader):
         mean = deterministic_model(x)
         std = outputs['obs'].std(0).cpu().detach().numpy()
         error = torch.abs(mean - y).cpu().detach().numpy()
-        from sklearn.isotonic import IsotonicRegression
+        # from sklearn.isotonic import IsotonicRegression
 
         # Apply isotonic regression for calibration
         # iso_reg = IsotonicRegression(out_of_bounds='clip')
@@ -173,6 +176,7 @@ def eval_and_graph(data_loader):
     import matplotlib.pyplot as plt
     #plot error against std
     plt.figure()
+    plt.tight_layout()
     plt.subplot(1,3,1)
     plt.scatter(x_error, x_std)
     # plt.ylim(1.0, 2.5)
@@ -197,7 +201,7 @@ def eval_and_graph(data_loader):
         
 def diagnoistic_bnn():
     import arviz as az
-    posterior_samples = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn2_best_model.pth')
+    posterior_samples = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn4_best_model.pth')
     
     
     # Convert the posterior samples to a format that ArviZ expects
@@ -237,24 +241,100 @@ def diagnoistic_bnn():
     ess_df = pd.DataFrame({k: v.flatten() for k, v in ess_dict.items()}) 
     ess_df.to_csv('ess.csv')
 
-    # # R-hat statistic
-    # rhat = az.rhat(inference_data)
-    # print("R-hat statistic:")
-    # print(rhat)
-
-    # # Summary of diagnostics
-    # summary = az.summary(inference_data)
-    # print(summary)
-
+def visualizing_and_evaluate_one_folder(model_address, folder, save_path):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    weights = torch.load(model_address)
+    model = BNN_pretrained
+    # model = model.to(device)
+    # model.eval()
+    x_error,y_error,z_error = [],[],[]
+    x_std, y_std, z_std = [],[],[]
+    dir_list = os.listdir(folder)
+    inputs = []
+    targets = []
+    for file in dir_list:
+        file_path = os.path.join(folder, file)
+        data_dict = np.load(file_path, allow_pickle=True, encoding= 'latin1').item()
+        inputs.append(data_dict['force'])
+        targets.append(data_dict['GT'])
+        if data_dict['force'][-1] == 0 and data_dict['force'][-2] == 0:
+            index00 = len(inputs) - 1
     
+        
+    inputs = torch.tensor(inputs).float()
+    inputs = inputs.view(-1, 8)
+    targets = torch.tensor(targets).float()
+    targets = targets.view(-1, 3)
+    inputs = inputs.to(device)
+    targets = targets.to(device)
+    
+    pred = Predictive(model=model, posterior_samples=weights)
+    outputs = pred(inputs)
+    mean = outputs['obs'].mean(0)
+    std = outputs['obs'].std(0).cpu().detach().numpy()
+    for i in range(len(inputs)):
+        error = torch.abs(mean[i] - targets[i]).cpu().detach().numpy()
+        x_error.append(error[0])
+        y_error.append(error[1])
+        z_error.append(error[2])
+        x_std.append(std[i][0])
+        y_std.append(std[i][1])
+        z_std.append(std[i][2])
+    
+    if index00:
+        error00 = torch.abs(mean[index00] - targets[index00]).cpu().detach().numpy()
+        std00 = std[index00]
+    import matplotlib.pyplot as plt
+    #plot error against std
+    plt.figure()
+    plt.subplot(1,3,1)
+    plt.scatter(x_error, x_std)
+    plt.scatter(error00[0], std00[0], color='red')
+    # plt.ylim(1.0, 2.5)
+    plt.xlabel('Error')
+    plt.ylabel('Std')
+    plt.title('X-axis')
+    
+    plt.subplot(1,3,2)
+    plt.scatter(y_error, y_std)
+    plt.scatter(error00[1], std00[1], color='red')
+    # plt.ylim(1.0, 2.5)
+    plt.xlabel('Error')
+    plt.ylabel('Std')
+    plt.title('Y-axis')
+    
+    plt.subplot(1,3,3)
+    plt.scatter(z_error, z_std)
+    plt.scatter(error00[2], std00[2], color='red')
+    # plt.ylim(1.0, 2.5)
+    plt.xlabel('Error')
+    plt.ylabel('Std')
+    plt.title('Z-axis')
+    
+    folder_name = folder.split('/')[-1]
+    plt.savefig(save_path + folder_name + '_error_vs_std.png')
+    print('Average error: ', np.mean(x_error), np.mean(y_error), np.mean(z_error))
+    
+    
+def evaluate_main():
+    model_address = '/media/okemo/extraHDD31/samueljin/Model/bnn3_best_model.pth'
+    folder = '/media/okemo/extraHDD31/samueljin/data2'
+    save_path = '/media/okemo/extraHDD31/samueljin/Fig/'
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    for folder_num in os.listdir(folder):
+        print(folder_num)
+        folder_num = os.path.join(folder, folder_num)
+        visualizing_and_evaluate_one_folder(model_address, folder_num, save_path)
     
     
 if __name__ == '__main__':
     
     # diagnoistic_bnn()
-    train_loader = DataLoader(HapOnePos('/media/okemo/extraHDD31/samueljin/data2'), batch_size=19000, shuffle=True)
+    train_loader = DataLoader(HapOnePos('/media/okemo/extraHDD31/samueljin/data2'), batch_size=18000, shuffle=True)
     # print(len(train_loader), len(test_loader))
-    # train_bnn(train_loader)
+    train_bnn(train_loader)
     # bnn = BNN(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
     # bnn.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/vbllnet_1pos_best_model.pth'))
     eval_and_graph(train_loader)
+    # evaluate_main()

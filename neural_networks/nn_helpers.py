@@ -391,6 +391,8 @@ class HapOnePos(Dataset):
         self.data = []
         dirlist = os.listdir(root_dir)
         for run in dirlist:
+            if '.' in run:
+                continue
             dataset_length = len(os.listdir(os.path.join(root_dir, run)))
             for data in os.listdir(os.path.join(root_dir, run)):
 
