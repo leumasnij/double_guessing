@@ -352,6 +352,11 @@ class HapDatasetFromTwoPos(Dataset):
         self.data = []
         dirlist = os.listdir(root_dir)
         for run in dirlist:
+            if '.' in run:
+                continue
+            if len(os.listdir(os.path.join(root_dir, run))) == 0:
+                continue
+            
             dataset_length = len(os.listdir(os.path.join(root_dir, run)))
             ref_file_name = 'data' + str(dataset_length-1) + '.npy'
             ref_force = np.load(os.path.join(root_dir, run, ref_file_name), allow_pickle=True, encoding= 'latin1').item()['force'][:6]
@@ -417,3 +422,43 @@ class HapOnePos(Dataset):
         y = torch.tensor(y).float()
         return x, y
         
+class HapTwoPos(Dataset):
+    def __init__(self, root_dir):
+        self.root_dir = root_dir
+        self.data = []
+        dirlist = os.listdir(root_dir)
+        for run in dirlist:
+            print(run)
+            if '.' in run:
+                continue
+            if len(os.listdir(os.path.join(root_dir, run))) == 0:
+                continue
+            data_list = os.listdir(os.path.join(root_dir, run))
+            for i in range(len(data_list)-1):
+                for j in range(i+1, len(data_list)):
+                    data1 = data_list[i]
+                    data2 = data_list[j]
+                    run_dir1 = os.path.join(root_dir, run, data1)
+                    run_dir2 = os.path.join(root_dir, run, data2)
+                    dict1 = np.load(run_dir1, allow_pickle=True, encoding= 'latin1').item()
+                    dict2 = np.load(run_dir2, allow_pickle=True, encoding= 'latin1').item()
+                    if sum(np.abs(dict1['force'][:6])) == 0 or sum(np.abs(dict2['force'][:6])) == 0:
+                        # print('skipping ' + run_dir)
+                        continue
+                    force12 = np.concatenate((dict1['force'], dict2['force']))
+                    force21 = np.concatenate((dict2['force'], dict1['force']))
+                    self.data.append({'force': force12, 'GT': dict1['GT'][:3]})
+                    self.data.append({'force': force21, 'GT': dict2['GT'][:3]})
+        print(len(self.data))
+    def __len__(self):
+        # print(len(self.data))
+        return len(self.data)
+    
+    def __getitem__(self, idx):
+        dict_ = self.data[idx]
+        # print(dict_)
+        x = dict_['force']
+        y = dict_['GT'][:3]*100
+        x = torch.tensor(x).float()
+        y = torch.tensor(y).float()
+        return x, y

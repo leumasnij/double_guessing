@@ -2,7 +2,7 @@ import torch
 import vbll
 import torch.nn as nn
 from tqdm import tqdm
-from nn_helpers import HapticDataset, HapDatasetFromTwoPos, HapOnePos   
+from nn_helpers import HapticDataset, HapDatasetFromTwoPos, HapOnePos, HapTwoPos
 from torch.utils.data import DataLoader
 import numpy as np
 class RegNet(nn.Module):
@@ -167,35 +167,39 @@ def trainHap(model, train_loader, val_loader, optimizer, device, epochs, save_pa
             inputs = inputs.to(device)
             # hap = hap.to(device)
             outputs = model(inputs)
-            error += np.abs(targets.detach().cpu().numpy() - outputs.detach().cpu().numpy())
-    print(f"Average error: {error/len(val_loader)}")
+            batch_error = torch.abs(outputs - targets).sum(dim=0).cpu().numpy()
+            error = np.add(error, batch_error)
+    batch_size = 48
+    print(f"Average error: {error/(len(val_loader)*batch_size)}")
     
 if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = hapVBLLnet().to(device)
-    optimizer = torch.optim.RAdam(model.parameters(), lr=0.0005)
-    root_dir = '/media/okemo/extraHDD31/samueljin/data2'
-    save_path = '/media/okemo/extraHDD31/samueljin/Model/vbllnetOnePos'
-    dataset = HapOnePos(root_dir)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-    train_loader = DataLoader(train_dataset, batch_size=48, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_dataset, batch_size=48, shuffle=True, num_workers=4)
-    train_vbll(model, train_loader, val_loader, optimizer, device, 50, save_path)
-    
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # model = hapVBLLnet(input_size=14).to(device)
-    # optimizer = torch.optim.RAdam(model.parameters(), lr=0.002)
+    # model = hapVBLLnet().to(device)
+    # optimizer = torch.optim.RAdam(model.parameters(), lr=0.0005)
     # root_dir = '/media/okemo/extraHDD31/samueljin/data2'
-    # save_path = '/media/okemo/extraHDD31/samueljin/Model/vbllnet_2pos'
-    # dataset = HapDatasetFromTwoPos(root_dir)
+    # save_path = '/media/okemo/extraHDD31/samueljin/Model/vbllnetOnePos'
+    # dataset = HapOnePos(root_dir)
     # train_size = int(0.8 * len(dataset))
     # val_size = len(dataset) - train_size
     # train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
     # train_loader = DataLoader(train_dataset, batch_size=48, shuffle=True, num_workers=4)
     # val_loader = DataLoader(val_dataset, batch_size=48, shuffle=True, num_workers=4)
-    # train_vbll(model, train_loader, val_loader, optimizer, device, 200, save_path)
+    # train_vbll(model, train_loader, val_loader, optimizer, device, 50, save_path)
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = RegNet(input_size=16, output_size=3).to(device)
+    optimizer = torch.optim.RAdam(model.parameters(), lr=0.002)
+    root_dir = '/media/okemo/extraHDD31/samueljin/data2'
+    save_path = '/media/okemo/extraHDD31/samueljin/Model/MLP2PosAll'
+    # dataset = HapDatasetFromTwoPos(root_dir)
+    dataset = HapTwoPos(root_dir)
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    train_loader = DataLoader(train_dataset, batch_size=4800, shuffle=True, num_workers=4)
+    val_loader = DataLoader(val_dataset, batch_size=4800, shuffle=True, num_workers=4)
+    # train_vbll(model, train_loader, val_loader, optimizer, device, 500, save_path)
+    trainHap(model, train_loader, val_loader, optimizer, device, 300, save_path)
     
     # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     # model = RegNet(input_size=8, output_size=3).to(device)

@@ -12,6 +12,8 @@ from pyro.nn import PyroModule, PyroSample
 import numpy as np
 from pyro.infer import Predictive
 from PyroNet import BNN_pretrained
+from matplotlib import pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
 def deterministic_model(weights, deterministic_model, device):
     # deterministic_model = RegNet(input_size=8, output_size=3)
@@ -91,8 +93,10 @@ def find_closest_angle(source, list_of_arrays):
     return closest_index
 
 class activeDataset(Dataset):
-    def __init__(self, folder, data_file_name = None, pre_orgainized = False, uncertainty_weight_addr = None):
+    def __init__(self, folder, data_file_name = None, pre_orgainized = False, uncertainty_weight_addr = None, only_zero_init = False):
         super(activeDataset, self).__init__()
+        if only_zero_init:
+            data_file_name = data_file_name.split('.')[0] + '_zero_init.npy'
         if pre_orgainized:
             file_name = os.path.join(folder, data_file_name)
             self.data = np.load(file_name, allow_pickle=True)
@@ -109,10 +113,26 @@ class activeDataset(Dataset):
                 if len(os.listdir(os.path.join(folder, run))) == 0:
                     continue
                 mean, std, inputs, targets = dataset_helper(os.path.join(folder, run), uncertainty_weight_addr, self.deter_model)
-                print(run)
+                # print(run)
+                if only_zero_init:
+                    condition = (inputs[:, -2] == 0) & (inputs[:, -1] == 0)
+                    indices = np.where(condition)[0]
+                    if len(indices) != 1:
+                        continue
+                    closeset_idx = find_closest_index(mean[indices], targets[indices], mean)
+                    GT_ = inputs[closeset_idx][-2:]
+                    mean = mean[indices]
+                    std = std[indices]
+                    inputs = inputs[indices]
+                    targets = targets[indices]
+                    input_array = np.concatenate([mean, std], axis = 1)
+                    
+                    dict_ = {'input': input_array, 'GT': GT_}
+                    self.data.append(dict_)
+                    continue
+                
                 for i in range(mean.shape[0]):
                     closeset_idx = find_closest_index(mean[i], targets[i], mean)
-                    
                     input_array = np.concatenate(np.array([mean[i], std[i]]))
                     # if inputs[i][-2] == 0 and inputs[i][-1] == 0:
                         # print('00_best angle: ' + str(inputs[closeset_idx][-2:]))
@@ -120,6 +140,67 @@ class activeDataset(Dataset):
                     dict_ = {'input': input_array, 'GT': GT_}
                     self.data.append(dict_)
             np.save(os.path.join(folder, data_file_name), self.data)
+        print(f'total data: {len(self.data)}') 
+    def __len__(self):
+        return len(self.data)
+                
+    def __getitem__(self, idx):
+        # print(self.data[idx]['input'], self.data[idx]['GT'])
+        return self.data[idx]['input'], self.data[idx]['GT']
+            
+class GridSearchDataset(Dataset):
+    def __init__(self, folder, data_file_name = None, pre_orgainized = False, uncertainty_weight_addr = None, only_zero_init = False):
+        super(GridSearchDataset, self).__init__()
+        if only_zero_init:
+            data_file_name = data_file_name.split('.')[0] + '_zero_init.npy'
+        if pre_orgainized:
+            file_name = os.path.join(folder, data_file_name)
+            self.data = np.load(file_name, allow_pickle=True)
+        else:
+            self.uncertainty_weight = torch.load(uncertainty_weight_addr)
+            self.deter_model = RegNet(input_size=8, output_size=3)
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.deter_model = deterministic_model(self.uncertainty_weight, self.deter_model, device)
+            self.data = []
+            dirlist = os.listdir(folder)
+            dirlist = np.sort(dirlist)
+            for run in dirlist:
+                if '.' in run:
+                    continue
+                if len(os.listdir(os.path.join(folder, run))) == 0:
+                    continue
+                mean, std, inputs, targets = dataset_helper(os.path.join(folder, run), uncertainty_weight_addr, self.deter_model)
+                print(run)
+                if only_zero_init:
+                    condition = (inputs[:, -2] == 0) & (inputs[:, -1] == 0)
+                    indices = np.where(condition)[0]
+                    if len(indices) != 1:
+                        continue
+                    for i in range(mean.shape[0]):
+                        input_array = [mean[indices][0], std[indices][0], inputs[i][-2:]]
+                        # print(input_array)
+                        input_array = np.concatenate(input_array)
+                        new_est = (mean[indices] + mean[i])/2
+                        L2_error = np.linalg.norm(targets[i] - new_est)
+                        dict1_ = {'input': input_array, 'GT': L2_error}
+                        self.data.append(dict1_)
+                    continue
+                for i in range(mean.shape[0]):
+                    for j in range(i+1, mean.shape[0]):
+                        input_array1 = [mean[i], std[i], inputs[j][-2:]]
+                        input_array1 = np.concatenate(input_array1)
+                        input_array2 = [mean[j], std[j], inputs[i][-2:]]
+                        input_array2 = np.concatenate(input_array2)
+                        # print(input_array)
+                        new_est = (mean[j] + mean[i])/2
+                        L2_error = np.linalg.norm(targets[i] - new_est)
+                        dict1_ = {'input': input_array1, 'GT': L2_error}
+                        dict2_ = {'input': input_array2, 'GT': L2_error}
+                        self.data.append(dict1_)
+                        self.data.append(dict2_)
+            
+            np.save(os.path.join(folder, data_file_name), self.data)           
+        print(f'total data: {len(self.data)}')
     def __len__(self):
         return len(self.data)
                 
@@ -139,6 +220,19 @@ class activeNet(nn.Module):
         x = self.fc3(x)
         return x   
     
+class GridSearchNet(nn.Module):
+    def __init__(self):
+        super(GridSearchNet, self).__init__()
+        self.fc1 = nn.Linear(8, 64)
+        self.fc2 = nn.Linear(64, 32)
+        self.fc3 = nn.Linear(32, 1)
+        
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = self.fc3(x)
+        return x 
+    
 def train_activenet(model, train_loader, val_loader, optimizer, criterion, device, epochs, save_path):
     lowest_loss = 1000
     model = model.to(device)
@@ -149,6 +243,8 @@ def train_activenet(model, train_loader, val_loader, optimizer, criterion, devic
                 # Forward pass
                 optimizer.zero_grad()
                 inputs = inputs.to(device)
+                if len(targets.shape) == 1:
+                    targets = targets.view(-1, 1)
                 targets = targets.to(device)
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
@@ -162,6 +258,8 @@ def train_activenet(model, train_loader, val_loader, optimizer, criterion, devic
             for i, (inputs, targets) in enumerate(val_loader):
                 with torch.no_grad():
                     inputs = inputs.to(device)
+                    if len(targets.shape) == 1:
+                        targets = targets.view(-1, 1)
                     targets = targets.to(device)
                     outputs = model(inputs)
                     loss = criterion(outputs, targets)
@@ -231,7 +329,7 @@ def test_active(uncertainty_model_adr, active_model_adr, data_folder, device):
     refer = np.linspace(-10, 10, 100)
     # graph GT versus pred for each axis
     plt.scatter(np.array(GT)[:,0], np.array(pred1)[:,0], label = 'Without Active')
-    plt.scatter(np.array(GT)[:,1], np.array(pred2)[:,1], label = 'With Active')
+    plt.scatter(np.array(GT)[:,0], np.array(pred2)[:,0], label = 'With Active')
     plt.plot(refer, refer, 'r--')
     plt.legend()
     plt.xlabel('GT')
@@ -266,25 +364,193 @@ def test_active(uncertainty_model_adr, active_model_adr, data_folder, device):
     plt.title('Total Error')
     save_name = active_model_adr.split('/')[-1].split('.')[0] + '_error_plot.png'
     print(f'Improvement count: {improve_count}')
-    print(f'Improvement rate: {improve_count/GT.shape[0]}')
+    print(f'Improvement rate: {improve_count/len(GT)}')
     print('save_name: ', save_name)
     plt.savefig(save_name)
-
+    
+def grid_search(model, device, inputs):
+    # model = model.to(device)
+    angle1 = np.linspace(np.pi/6, 5*np.pi/6, 100)
+    angle2 = np.linspace(-np.pi/2, np.pi/2, 100)
+    output_mat = np.zeros((angle1.shape[0], angle2.shape[0]))
+    for i in range(angle1.shape[0]):
+        for j in range(angle2.shape[0]):
+            input_array = [inputs, [angle1[i], angle2[j]]]
+            input_array = np.concatenate(input_array)
+            out = model(torch.tensor(input_array).float().to(device))
+            output_mat[i, j] = out
+    return_angle1, return_angle2 = np.unravel_index(np.argmin(output_mat, axis=None), output_mat.shape)
+    return angle1[return_angle1], angle2[return_angle2]
             
+            
+            
+
+def test_grid_search(uncertainty_model_adr, active_model_adr, data_folder, device):
+    uncertainty_weight = torch.load(uncertainty_model_adr)
+    active_model = GridSearchNet()
+    active_model.load_state_dict(torch.load(active_model_adr))
+    active_model = active_model.to(device)
+    deter_model = RegNet(input_size=8, output_size=3)
+    deter_model = deterministic_model(uncertainty_weight, deter_model, device)
+    dirlist = os.listdir(data_folder)
+    error_before_active = [0,0,0]
+    error_after_active = [0,0,0]
+    improve_count = 0
+    GT = []
+    pred1 = []
+    pred2 = []
+    dirlist = np.random.permutation(dirlist)
+    dirlist = dirlist[:100]
+    for run in dirlist:
+        if '.' in run:
+            continue
+        if len(os.listdir(os.path.join(data_folder, run))) == 0:
+            continue
+        mean, std, inputs, targets = dataset_helper(os.path.join(data_folder, run), uncertainty_model_adr, deter_model)
+        print(run)
+        for i in range(mean.shape[0]):
+            if inputs[i][-2] == 0 and inputs[i][-1] == 0:
+                
+                input_array = [mean[i], std[i]]
+                input_array = np.concatenate(input_array)
+                new_angle1, new_angle2 = grid_search(active_model, device, input_array)
+                print(f'New angle1: {new_angle1}, New angle2: {new_angle2}')
+                closest_idx = find_closest_angle([new_angle1, new_angle2], inputs[:, -2:])
+                new_est = (mean[closest_idx] + mean[i])/2
+                error_without_active = targets[i] - mean[i]
+                error_with_active = targets[i] - new_est
+                print(f'Error without active: {error_without_active}')
+                print(f'Error with active: {error_with_active}')
+                print('-----------------------------------')
+                error_before_active += np.abs(error_without_active)
+                error_after_active += np.abs(error_with_active)
+                pred1.append(mean[i])
+                pred2.append(new_est)
+                GT.append(targets[i])
+                if np.linalg.norm(error_with_active) < np.linalg.norm(error_without_active):
+                    improve_count += 1
+    print(f'Error before active: {error_before_active/len(GT)}')
+    print(f'Error after active: {error_after_active/len(GT)}')
+    import matplotlib.pyplot as plt
+    plt.figure()
+    total_error_without_active = np.linalg.norm(np.array(pred1) - np.array(GT), axis = 1)
+    total_error_with_active = np.linalg.norm(np.array(pred2) - np.array(GT), axis = 1)
+    
+    plt.figure()
+    plt.subplot(2,2,1)
+    refer = np.linspace(-10, 10, 100)
+    # graph GT versus pred for each axis
+    plt.scatter(np.array(GT)[:,0], np.array(pred1)[:,0], label = 'Without Active')
+    plt.scatter(np.array(GT)[:,0], np.array(pred2)[:,0], label = 'With Active')
+    plt.plot(refer, refer, 'r--')
+    plt.legend()
+    plt.xlabel('GT')
+    plt.ylabel('Pred')
+    plt.title('X axis')
+    
+    plt.subplot(2,2,2)
+    plt.scatter(np.array(GT)[:,1], np.array(pred1)[:,1], label = 'Without Active')
+    plt.scatter(np.array(GT)[:,1], np.array(pred2)[:,1], label = 'With Active')
+    plt.plot(refer, refer, 'r--')
+    plt.legend()
+    plt.xlabel('GT')
+    plt.ylabel('Pred')
+    plt.title('Y axis')
+    
+    plt.subplot(2,2,3)
+    plt.scatter(np.array(GT)[:,2], np.array(pred1)[:,2], label = 'Without Active')
+    plt.scatter(np.array(GT)[:,2], np.array(pred2)[:,2], label = 'With Active')
+    plt.plot(refer, refer, 'r--')
+    plt.legend()
+    plt.xlabel('GT')
+    plt.ylabel('Pred')
+    plt.title('Z axis')
+    
+    plt.subplot(2,2,4)
+    # For last plot, plot the total error for both methods
+    plt.plot(total_error_without_active, label = 'Without Active')
+    plt.plot(total_error_with_active, label = 'With Active')
+    plt.legend()
+    plt.xlabel('Sample')
+    plt.ylabel('Error') 
+    plt.title('Total Error')
+    save_name = active_model_adr.split('/')[-1].split('.')[0] + '_error_plot.png'
+    print(f'Improvement count: {improve_count}')
+    print(f'Improvement rate: {improve_count/len(GT)}')
+    print('save_name: ', save_name)
+    plt.savefig(save_name)
+    
+    
+    
+def graph_angle_matching(uncertainty_weight_addr, device, folder):
+    uncertainty_weight = torch.load(uncertainty_weight_addr)
+    deter_model = RegNet(input_size=8, output_size=3)
+    deter_model = deterministic_model(uncertainty_weight, deter_model, device)
+    dirlist = os.listdir(folder)
+    np.random.seed(0)
+    dirlist = np.random.permutation(dirlist)
+    dirlist = dirlist[:100]
+    for run in dirlist:
+        if '.' in run:
+            continue
+        if len(os.listdir(os.path.join(folder, run))) == 0:
+            continue
+        mean, std, inputs, targets = dataset_helper(os.path.join(folder, run), uncertainty_weight_addr, deter_model)
+        print(run)
+        initial_angles = []
+        final_angles = []
+        for i in range(mean.shape[0]):
+            closeset_idx = find_closest_index(mean[i], targets[i], mean)
+            GT_ = inputs[closeset_idx][-2:]
+            initial_angles.append(inputs[i][-2:])
+            final_angles.append(GT_)
+    
+        initial_angles = np.array(initial_angles)
+        final_angles = np.array(final_angles) 
+        save_dir = 'data/' + run + '.npy'
+        np.save(save_dir, {'initial_angles': initial_angles, 'final_angles': final_angles})
+        
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+        # scatter = ax.scatter(initial_angles[:,0], initial_angles[:,1], final_angles[:,0], c='r', marker='o')
+        # ax.set_xlabel('initial angle1')
+        # ax.set_ylabel('initial angle2')
+        # ax.set_zlabel('final angle1')
+        # ax.set_title('3D Scatter Plot')
+        # fig.colorbar(scatter)
+        # plt.savefig('fig/' + run + 'angle1.png')
+        
+        # fig = plt.figure()
+        # ax = fig.add_subplot(111, projection='3d')
+        # scatter = ax.scatter(initial_angles[:,0], initial_angles[:,1], final_angles[:,1], c='r', marker='o')
+        # ax.set_xlabel('initial angle1')
+        # ax.set_ylabel('initial angle2')
+        # ax.set_zlabel('final angle2')
+        # ax.set_title('3D Scatter Plot')
+        # fig.colorbar(scatter)
+        # plt.savefig('fig/' + run + 'angle2.png')
     
 if __name__ == '__main__':
     folder = '/media/okemo/extraHDD31/samueljin/data2'
     uncertainty_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/bnn1_best_model.pth'
     # dataset = activeDataset(folder, data_file_name = 'active_dataset.npy', pre_orgainized = True, uncertainty_weight_addr = uncertainty_weight_addr)
+    # dataset = GridSearchDataset(folder, data_file_name = 'grid_search_dataset3.npy', pre_orgainized = True, uncertainty_weight_addr = uncertainty_weight_addr)
+    # dataset = activeDataset(folder, data_file_name = 'active_dataset1.npy', pre_orgainized = False, uncertainty_weight_addr = uncertainty_weight_addr, only_zero_init = True)
+    dataset = GridSearchDataset(folder, data_file_name = 'grid_search_dataset1.npy', pre_orgainized = False, uncertainty_weight_addr = uncertainty_weight_addr, only_zero_init = True)
     # model = activeNet()
+    model = GridSearchNet()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # train_test_split = int(len(dataset) * 0.8)
-    # train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_test_split, len(dataset) - train_test_split])
-    # train_loader = DataLoader(train_dataset, batch_size=48, shuffle=True, num_workers=4)
-    # test_loader = DataLoader(test_dataset, batch_size=48, shuffle=True, num_workers=4)
-    # optimizer = torch.optim.RAdam(model.parameters(), lr=0.0005)
-    # criterion = torch.nn.MSELoss()
-    save_path = '/media/okemo/extraHDD31/samueljin/Model/activeNet'
-    # train_activenet(model, train_loader, test_loader, optimizer, criterion, device, 500, save_path)
+    train_test_split = int(len(dataset) * 0.8)
+    train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_test_split, len(dataset) - train_test_split])
+    train_loader = DataLoader(train_dataset, batch_size=48, shuffle=True, num_workers=4)
+    test_loader = DataLoader(test_dataset, batch_size=48, shuffle=True, num_workers=4)
+    # train_loader = DataLoader(train_dataset, batch_size=4800, shuffle=True, num_workers=4)
+    # test_loader = DataLoader(test_dataset, batch_size=4800, shuffle=True, num_workers=4)
+    optimizer = torch.optim.RAdam(model.parameters(), lr=0.0005)
+    criterion = torch.nn.MSELoss()
+    save_path = '/media/okemo/extraHDD31/samueljin/Model/GSNetwithZeroInit1'
+    train_activenet(model, train_loader, test_loader, optimizer, criterion, device, 500, save_path)
     test_active(uncertainty_weight_addr, save_path + '_best_model.pth', folder, device)
+    # test_grid_search(uncertainty_weight_addr, save_path + '_best_model.pth', folder, device)
+    # graph_angle_matching(uncertainty_weight_addr, device, folder)
     
