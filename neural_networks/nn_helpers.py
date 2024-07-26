@@ -356,28 +356,27 @@ class HapDatasetFromTwoPos(Dataset):
                 continue
             if len(os.listdir(os.path.join(root_dir, run))) == 0:
                 continue
-            
-            dataset_length = len(os.listdir(os.path.join(root_dir, run)))
-            ref_file_name = 'data' + str(dataset_length-1) + '.npy'
-            ref_force = np.load(os.path.join(root_dir, run, ref_file_name), allow_pickle=True, encoding= 'latin1').item()['force'][:6]
-            # print(np.load(os.path.join(root_dir, run, ref_file_name), allow_pickle=True, encoding= 'latin1').item()['GT'])
-            # print(ref_force)
-            if sum(ref_force) == 0:
-                # print('skipping ' + os.path.join(root_dir, run, ref_file_name))
+            dataset = []
+            GT = []
+            for file2 in os.listdir(os.path.join(root_dir, run)):
+                dict_ = np.load(os.path.join(root_dir, run, file2), allow_pickle=True).item()
+                dataset.append(dict_['force'])
+                GT.append(dict_['GT'])
+            dataset = np.array(dataset)
+            condition = (dataset[:, -2] == 0) & (dataset[:, -1] == 0)
+            indices = np.where(condition)[0]
+            if len(indices) != 1:
                 continue
-            for data in os.listdir(os.path.join(root_dir, run)):
-                if data == ref_file_name:
-                    # print('skipping ' + os.path.join(root_dir, run, data))
-                    continue
-                run_dir = os.path.join(root_dir, run, data)
-                dict_ = np.load(run_dir, allow_pickle=True, encoding= 'latin1').item()
-                if sum(dict_['force'][:6]) == 0:
-                    # print('skipping ' + run_dir)
-                    continue
-                
-                dict_['force'] = np.concatenate((ref_force, dict_['force']))
+            reference = dataset[indices[0]]
+            dataset = np.delete(dataset, indices, axis=0)
+            GT = np.array(GT)
+            GT = np.delete(GT, indices, axis=0)
+            new_dataset = np.zeros((dataset.shape[0], 14))
+            for i in range(dataset.shape[0]):
+                input = np.concatenate((reference[:6], dataset[i]))
+                dict_ = {'force': input, 'GT': GT[i]}
                 self.data.append(dict_)
-                
+                    
     def __len__(self):
         return len(self.data)
     
@@ -424,6 +423,9 @@ class HapOnePos(Dataset):
         
 class HapTwoPos(Dataset):
     def __init__(self, root_dir):
+        if os.path.exists(os.path.join(root_dir, 'data2pos.npy')):
+            self.data = np.load(os.path.join(root_dir, 'data2pos.npy'), allow_pickle=True)
+            return
         self.root_dir = root_dir
         self.data = []
         dirlist = os.listdir(root_dir)
@@ -450,6 +452,7 @@ class HapTwoPos(Dataset):
                     self.data.append({'force': force12, 'GT': dict1['GT'][:3]})
                     self.data.append({'force': force21, 'GT': dict2['GT'][:3]})
         print(len(self.data))
+        np.save(os.path.join(root_dir, 'data2pos.npy'), self.data)
     def __len__(self):
         # print(len(self.data))
         return len(self.data)
