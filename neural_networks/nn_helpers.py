@@ -444,13 +444,18 @@ class HapTwoPos(Dataset):
                     run_dir2 = os.path.join(root_dir, run, data2)
                     dict1 = np.load(run_dir1, allow_pickle=True, encoding= 'latin1').item()
                     dict2 = np.load(run_dir2, allow_pickle=True, encoding= 'latin1').item()
+                    zero_padder = np.zeros(8)
                     if sum(np.abs(dict1['force'][:6])) == 0 or sum(np.abs(dict2['force'][:6])) == 0:
                         # print('skipping ' + run_dir)
                         continue
                     force12 = np.concatenate((dict1['force'], dict2['force']))
                     force21 = np.concatenate((dict2['force'], dict1['force']))
+                    force1 = np.concatenate((dict1['force'], zero_padder))
+                    force2 = np.concatenate((dict2['force'], zero_padder))
                     self.data.append({'force': force12, 'GT': dict1['GT'][:3]})
                     self.data.append({'force': force21, 'GT': dict2['GT'][:3]})
+                    self.data.append({'force': force1, 'GT': dict1['GT'][:3]})
+                    self.data.append({'force': force2, 'GT': dict2['GT'][:3]})
         print(len(self.data))
         np.save(os.path.join(root_dir, 'data2pos.npy'), self.data)
     def __len__(self):
