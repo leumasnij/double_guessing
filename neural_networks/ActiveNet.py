@@ -1,10 +1,10 @@
 import os
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '.'))
 import torch
-import vbll
 import torch.nn as nn
 from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
-from vbllnet import RegNet
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 import pyro
@@ -12,11 +12,33 @@ import pyro.distributions as dist
 from pyro.nn import PyroModule, PyroSample
 import numpy as np
 from pyro.infer import Predictive
-from PyroNet import BNN_pretrained
+from PyroNet import BNN_pretrained, BNN_pretrained2Pos
 from matplotlib import pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+
+class RegNet(nn.Module):
+    def __init__(self, input_size=512, output_size=2):
+        super(RegNet, self).__init__()
+        # Define the layers
+        self.fc1 = nn.Linear(input_size, 256)  # input layer (6) -> hidden layer (12)
+        self.fc2 = nn.Linear(256, 128) # hidden layer (12) -> hidden layer (24)
+        self.fc3 = nn.Linear(128, 64) # hidden layer (24) -> output layer (2)
+        self.fc4 = nn.Linear(64, output_size)
+
+        
+    def forward(self, x):
+        # Define the forward pass
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x
+
 def normalize(score, min_score, max_score):
     return (score - min_score) / (max_score - min_score)
+
+def radius2degree(radius):
+    return radius * 180 / np.pi
 
 def str2bool(v):
     if isinstance(v, bool):
@@ -25,6 +47,19 @@ def str2bool(v):
         return True
     elif v.lower() in ('no', 'false', 'f', 'n', '0'):
         return False
+
+def truedistributionfromobs(mean1, mean2, std1, std2):
+    var1 = std1.copy()
+    var2 = std2.copy()
+    # print(mean1, mean2, std1, std2)
+    for i in range(3):
+        var1[i] = std1[i]**2
+        var2[i] = std2[i]**2
+    weighted_mean = (mean1/var1 + mean2/var2) / (1/var1 + 1/var2)
+    weighted_var = 1 / (1/var1 + 1/var2)
+    weighted_std = np.sqrt(weighted_var)
+    return weighted_mean, weighted_std
+        
 
 def deterministic_model(weights, deterministic_model, device):
     # deterministic_model = RegNet(input_size=8, output_size=3)
@@ -41,23 +76,34 @@ def deterministic_model(weights, deterministic_model, device):
     return deterministic_model
     
 
-def dataset_helper(folder, model_addr, deterministic_model):
+def dataset_helper(folder, model_addr, deterministic_model, model = BNN_pretrained):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    weights = torch.load(model_addr)
-    model = BNN_pretrained
+    weights = torch.load(model_addr, map_location=torch.device('cuda'))
     determinstic_model = deterministic_model.to(device)
     dir_list = os.listdir(folder)
     inputs = []
     targets = []
-    for file in dir_list:
-        file_path = os.path.join(folder, file)
-        data_dict = np.load(file_path, allow_pickle=True, encoding= 'latin1').item()
-        inputs.append(data_dict['force'])
-        targets.append(data_dict['GT'][:3]*100)
-        # print(data_dict['GT'])
+    if model == BNN_pretrained2Pos:
+        for file in dir_list:
+            file_path = os.path.join(folder, file)
+            data_dict = np.load(file_path, allow_pickle=True, encoding= 'latin1').item()
+            # zero_pad = np.zeros(8)
+            # print(data_dict['force'])
+            inputs.append(np.concatenate([data_dict['force'], data_dict['force']]))
+            targets.append(data_dict['GT'][:3]*100)
+            # print(data_dict['GT'])
+        inputs = torch.tensor(inputs).float()
+        inputs = inputs.view(-1, 16)
+    else:
+        for file in dir_list:
+            file_path = os.path.join(folder, file)
+            data_dict = np.load(file_path, allow_pickle=True, encoding= 'latin1').item()
+            inputs.append(data_dict['force'])
+            targets.append(data_dict['GT'][:3]*100)
+            # print(data_dict['GT'])
         
-    inputs = torch.tensor(inputs).float()
-    inputs = inputs.view(-1, 8)
+        inputs = torch.tensor(inputs).float()
+        inputs = inputs.view(-1, 8)
     targets = torch.tensor(targets).float()
     targets = targets.view(-1, 3)
     inputs = inputs.to(device)
@@ -65,8 +111,10 @@ def dataset_helper(folder, model_addr, deterministic_model):
     
     pred = Predictive(model=model, posterior_samples=weights)
     outputs = pred(inputs)
+    print(inputs.shape)
     mean = deterministic_model(inputs).cpu().detach().numpy()
     std = outputs['obs'].std(0).cpu().detach().numpy()
+    # print(std.shape)
     
     return mean, std, inputs.cpu().detach().numpy(), targets.cpu().detach().numpy()
 
@@ -129,14 +177,25 @@ def find_closest_angle(source, list_of_arrays):
 
     closest_index = -1
     smallest_distance = float('inf')
+    angle2_list = np.unique(list_of_arrays[:, -2])
     
+    # closest_angle2 = -1
+    # for angle2 in range(len(angle2_list)):
+    #     distance = np.linalg.norm(source[-2] - angle2)
+    #     if distance < smallest_distance:
+    #         smallest_distance = distance
+    #         closest_angle2 = angle2
+            
+    smallest_distance = float('inf')
     # Iterate over the list of arrays
     for i, array in enumerate(list_of_arrays):
         # Compute the average of the source and current array
-        distance = np.linalg.norm(source - array)
-        if distance < smallest_distance:
-            smallest_distance = distance
-            closest_index = i
+        # if array[-2] == angle2_list[closest_angle2]:
+            
+            distance = np.linalg.norm(source - array)
+            if distance < smallest_distance:
+                smallest_distance = distance
+                closest_index = i
     
     return closest_index
 
@@ -226,10 +285,11 @@ class GridSearchDataset(Dataset):
                     if len(indices) != 1:
                         continue
                     for i in range(mean.shape[0]):
-                        input_array = [mean[indices][0], std[indices][0], inputs[i][-2:]]
+                        input_array = [mean[indices], std[indices], inputs[i][-2:]]
                         # print(input_array)
                         input_array = np.concatenate(input_array)
-                        new_est = (mean[indices] + mean[i])/2
+                        new_est, new_std = truedistributionfromobs(mean[indices], mean[i], std[indices], std[i])
+                        
                         L2_error = np.linalg.norm(targets[i] - new_est)
                         dict1_ = {'input': input_array, 'GT': L2_error}
                         self.data.append(dict1_)
@@ -244,31 +304,187 @@ class GridSearchDataset(Dataset):
                         input_array2 = [mean[j], std[j], inputs[i][-2:]]
                         input_array2 = np.concatenate(input_array2)
                         # print(input_array)
-                        new_est = (mean[j] + mean[i])/2
+                        new_est, new_std = truedistributionfromobs(mean[i], mean[j], std[i], std[j])
                         L2_error = np.linalg.norm(targets[i] - new_est)
+                        # L2_error = targets[i] - new_est
                         dict1_ = {'input': input_array1, 'GT': L2_error}
                         dict2_ = {'input': input_array2, 'GT': L2_error}
                         self.data.append(dict1_)
                         self.data.append(dict2_)
-                        if L2_error < best_error:
-                            best_error = L2_error
-                print(f'Best error: {best_error}')
+                #         if L2_error < best_error:
+                #             best_error = L2_error
+                # print(f'Best error: {best_error}')
             
             np.save(os.path.join(folder, data_file_name), self.data)           
-        # scores = [obj['GT'] for obj in self.data]
-        # mean_score = np.mean(scores)
-        # std_score = np.std(scores)  
-        # print(f'mean: {mean_score}, std: {std_score}')
-        # for obj in self.data:
-        #     obj['GT'] = (obj['GT'] - mean_score)/ std_score
         
         print(f'total data: {len(self.data)}')
     def __len__(self):
         return len(self.data)
                 
     def __getitem__(self, idx):
+        self.data[idx]['input'][-2:] = radius2degree(self.data[idx]['input'][-2:])
+        self.data[idx]['GT'] = np.linalg.norm(self.data[idx]['GT'])
+        return self.data[idx]['input'], self.data[idx]['GT']
+
+class GridSearch2Dataset(Dataset):
+    def __init__(self, folder, data_file_name = None, pre_orgainized = False, uncertainty_weight_addr = None, only_zero_init = False):
+        super(GridSearch2Dataset, self).__init__()
+        if only_zero_init:
+            data_file_name = data_file_name.split('.')[0] + '_zero_init.npy'
+        if pre_orgainized:
+            file_name = os.path.join(folder, data_file_name)
+            self.data = np.load(file_name, allow_pickle=True)
+        else:
+            self.uncertainty_weight = torch.load(uncertainty_weight_addr, map_location=torch.device('cuda'))
+            self.deter_model = RegNet(input_size=16, output_size=3)
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.deter_model = deterministic_model(self.uncertainty_weight, self.deter_model, device)
+            self.data = []
+            dirlist = os.listdir(folder)
+            dirlist = np.sort(dirlist)
+            for run in dirlist:
+                if '.' in run:
+                    continue
+                if len(os.listdir(os.path.join(folder, run))) == 0:
+                    continue
+                mean, std, inputs, targets = dataset_helper(os.path.join(folder, run), uncertainty_weight_addr, self.deter_model, BNN_pretrained2Pos)
+                print(run)
+                best_error = 1000
+                if only_zero_init:
+                    condition = (inputs[:, 6] == 0) & (inputs[:, 7] == 0)
+                    indices = np.where(condition)[0]
+                    # print(inputs[:, 5])
+                    if len(indices) != 1:
+                        
+                        continue
+                    for i in range(mean.shape[0]):
+                        input_array = [mean[indices][0], std[indices][0], radius2degree(inputs[i][6:8])]
+                        # print(input_array)
+                        input_array = np.concatenate(input_array)
+                        
+                        x = [inputs[indices][0][:8], inputs[i][:8]]
+                        x = np.concatenate(x)
+                        x = torch.tensor(x).float().to(device)
+                        new_est = self.deter_model(x).cpu().detach().numpy()
+                        L2_error = np.linalg.norm(targets[i] - new_est)
+                        dict1_ = {'input': input_array, 'GT': L2_error}
+                        self.data.append(dict1_)
+                        if L2_error < best_error:
+                            best_error = L2_error
+                    # print(f'Best error: {best_error}')
+                    continue
+                for i in range(mean.shape[0]):
+                    for j in range(i+1, mean.shape[0]):
+                        input_array1 = [mean[i], std[i], inputs[j][6:8]]
+                        input_array1 = np.concatenate(input_array1)
+                        input_array2 = [mean[j], std[j], inputs[i][6:8]]
+                        input_array2 = np.concatenate(input_array2)
+                        # print(input_array)
+                        # print(input_array1, input_array2)
+                        new_est1 = self.deter_model(torch.tensor(np.concatenate([inputs[i][:8], inputs[j][:8]])).float().to(device)).cpu().detach().numpy()
+                        new_est2 = self.deter_model(torch.tensor(np.concatenate([inputs[j][:8], inputs[i][:8]])).float().to(device)).cpu().detach().numpy()
+                        L2_error1 = np.linalg.norm(targets[i] - new_est1)
+                        L2_error2 = np.linalg.norm(targets[j] - new_est2)
+                        # print(targets[i], targets[j], L2_error1, L2_error2)
+                        # L2_error1 = min(L2_error1, 1.0)
+                        # L2_error2 = min(L2_error2, 1.0)
+                        dict1_ = {'input': input_array1, 'GT': L2_error1}
+                        dict2_ = {'input': input_array2, 'GT': L2_error2}
+                        self.data.append(dict1_)
+                        self.data.append(dict2_)
+                        if L2_error1 < best_error or L2_error2 < best_error:
+                            best_error = min(L2_error1, L2_error2)
+                print(f'Best error: {best_error}')
+            
+            np.save(os.path.join(folder, data_file_name), self.data)           
+        # self.max_error = max([d['GT'] for d in self.data])
+        # self.min_error = min([d['GT'] for d in self.data])
+        print(f'total data: {len(self.data)}')
+    def __len__(self):
+        return len(self.data)
+                
+    def __getitem__(self, idx):
+        self.data[idx]['input'][-2:] = radius2degree(self.data[idx]['input'][-2:])
+        # print(self.data[idx]['input'][-2:])
+        
         return self.data[idx]['input'], self.data[idx]['GT']
     
+    
+class GridSearch2wRawDataset(Dataset):
+    def __init__(self, folder, data_file_name = None, pre_orgainized = False, uncertainty_weight_addr = None, only_zero_init = False):
+        super(GridSearch2wRawDataset, self).__init__()
+        if only_zero_init:
+            data_file_name = data_file_name.split('.')[0] + '_zero_init.npy'
+        if pre_orgainized:
+            file_name = os.path.join(folder, data_file_name)
+            self.data = np.load(file_name, allow_pickle=True)
+        else:
+            self.uncertainty_weight = torch.load(uncertainty_weight_addr)
+            self.deter_model = RegNet(input_size=16, output_size=3)
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.deter_model = deterministic_model(self.uncertainty_weight, self.deter_model, device)
+            self.data = []
+            dirlist = os.listdir(folder)
+            dirlist = np.sort(dirlist)
+            for run in dirlist:
+                if '.' in run:
+                    continue
+                if len(os.listdir(os.path.join(folder, run))) == 0:
+                    continue
+                mean, std, inputs, targets = dataset_helper(os.path.join(folder, run), uncertainty_weight_addr, self.deter_model, BNN_pretrained2Pos)
+                print(run)
+                best_error = 1000
+                if only_zero_init:
+                    condition = (inputs[:, 6] == 0) & (inputs[:, 7] == 0)
+                    indices = np.where(condition)[0]
+                    # print(inputs[:, 5])
+                    if len(indices) != 1:
+                        continue
+                    for i in range(mean.shape[0]):
+                        input_array = [inputs[indices][0], mean[indices][0], std[indices][0], inputs[i][6:8]]
+                        # print(input_array)
+                        input_array = np.concatenate(input_array)
+                        
+                        x = [inputs[indices][0][:8], inputs[i][:8]]
+                        x = np.concatenate(x)
+                        x = torch.tensor(x).float().to(device)
+                        new_est = self.deter_model(x).cpu().detach().numpy()
+                        L2_error = np.linalg.norm(targets[i] - new_est)
+                        dict1_ = {'input': input_array, 'GT': L2_error}
+                        self.data.append(dict1_)
+                        if L2_error < best_error:
+                            best_error = L2_error
+                    # print(f'Best error: {best_error}')
+                    continue
+                for i in range(mean.shape[0]):
+                    for j in range(i+1, mean.shape[0]):
+                        input_array1 = [inputs[i][:8], mean[i], std[i], inputs[j][-2:]]
+                        input_array1 = np.concatenate(input_array1)
+                        input_array2 = [inputs[j][:8], mean[j], std[j], inputs[i][-2:]]
+                        input_array2 = np.concatenate(input_array2)
+                        # print(input_array)
+                        new_est1 = self.deter_model(torch.tensor(np.concatenate([inputs[i][:8], inputs[j][:8]])).float().to(device)).cpu().detach().numpy()
+                        new_est2 = self.deter_model(torch.tensor(np.concatenate([inputs[j][:8], inputs[i][:8]])).float().to(device)).cpu().detach().numpy()
+                        L2_error1 = np.linalg.norm(targets[i] - new_est1)
+                        L2_error2 = np.linalg.norm(targets[j] - new_est2)
+                        dict1_ = {'input': input_array1, 'GT': L2_error1}
+                        dict2_ = {'input': input_array2, 'GT': L2_error2}
+                        self.data.append(dict1_)
+                        self.data.append(dict2_)
+                        if L2_error1 < best_error or L2_error2 < best_error:
+                            best_error = min(L2_error1, L2_error2)
+                print(f'Best error: {best_error}')
+            
+            np.save(os.path.join(folder, data_file_name), self.data)           
+        
+        print(f'total data: {len(self.data)}')
+    def __len__(self):
+        return len(self.data)
+                
+    def __getitem__(self, idx):
+        self.data[idx]['input'][-2:] = radius2degree(self.data[idx]['input'][-2:])
+        return self.data[idx]['input'], self.data[idx]['GT']
+ 
 class GridSearchGTMSEDataset(Dataset):
     def __init__(self, folder, data_file_name = None, pre_orgainized = False, uncertainty_weight_addr = None, only_zero_init = False):
         super(GridSearchGTMSEDataset, self).__init__()
@@ -535,11 +751,24 @@ class GridSearchNet(nn.Module):
         x = torch.relu(self.fc2(x))
         x = self.fc3(x)
         return x 
+    
+# class GridSearchRawNet(nn.Module):
+#     def __init__(self):
+#         super(GridSearchRawNet, self).__init__()
+#         self.fc1 = nn.Linear(16, 64)
+#         self.fc2 = nn.Linear(64, 32)
+#         self.fc3 = nn.Linear(32, 1)
+        
+#     def forward(self, x):
+#         x = torch.relu(self.fc1(x))
+#         x = torch.relu(self.fc2(x))
+#         x = self.fc3(x)
+#         return x 
 
-class DenserNet(nn.Module):
+class GridSearchRawNet(nn.Module):
     def __init__(self):
-        super(DenserNet, self).__init__()
-        self.fc1 = nn.Linear(8, 512)
+        super(GridSearchRawNet, self).__init__()
+        self.fc1 = nn.Linear(16, 512)
         self.fc2 = nn.Linear(512, 128)
         self.fc3 = nn.Linear(128, 32)
         self.fc4 = nn.Linear(32, 1)
@@ -549,9 +778,61 @@ class DenserNet(nn.Module):
         x = torch.relu(self.fc2(x))
         x = torch.relu(self.fc3(x))
         x = self.fc4(x)
+        return x
+    
+    
+class ALLNet(nn.Module):
+    def __init__(self):
+        super(ALLNet, self).__init__()
+        self.fc1 = nn.Linear(8, 512)
+        self.fc2 = nn.Linear(512, 128)
+        self.fc3 = nn.Linear(128, 32)
+        self.fc4 = nn.Linear(32, 3)
+        
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = self.fc4(x)
+        return x 
+    
+
+class DenserNet(nn.Module):
+    def __init__(self):
+        super(DenserNet, self).__init__()
+        self.fc1 = nn.Linear(8, 1024)
+        self.fc2 = nn.Linear(1024, 4096)
+        self.fc3 = nn.Linear(4096, 1024)
+        self.fc4 = nn.Linear(1024, 1)
+        
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = self.fc4(x)
         return x 
     
     
+class DenseAFNet(nn.Module):
+    def __init__(self):
+        super(DenseAFNet, self).__init__()
+        self.fc1 = nn.Linear(8, 1024)
+        self.fc2 = nn.Linear(1024, 1024)
+        self.fc3 = nn.Linear(1024, 512)
+        self.fc4 = nn.Linear(512, 64)
+        self.fc5 = nn.Linear(64, 1)
+        
+        
+        
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.relu(self.fc2(x))
+        x = torch.relu(self.fc3(x))
+        x = torch.relu(self.fc4(x))
+        x = self.fc5(x)
+        return x 
+    
+
 class UNet1D(nn.Module):
     def __init__(self):
         super(UNet1D, self).__init__()
@@ -600,7 +881,7 @@ def train_activenet(model, train_loader, val_loader, optimizer, criterion, devic
                 inputs = inputs.to(device)
                 if len(targets.shape) == 1:
                     targets = targets.view(-1, 1)
-                targets = targets.to(device)
+                targets = targets.float().to(device)
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
                 loss.backward()
@@ -722,28 +1003,81 @@ def test_active(active_model, uncertainty_model_adr, active_model_adr, data_fold
     print('save_name: ', save_name)
     plt.savefig(save_name)
     
-def grid_search(model, device, inputs, grid_size = 100):
+def grid_search(model, device, inputs, grid_size = 10):
     # model = model.to(device)
     angle2 = np.linspace(np.pi/6, 5*np.pi/6, grid_size)
     angle1 = np.linspace(-np.pi/2, np.pi/2, grid_size)
-    output_mat = np.ones((angle1.shape[0], angle2.shape[0]))
-    best_angle = [0,0]
+    output_mat = np.ones((angle1.shape[0], angle2.shape[0]))*10
+    # best_angle = [0,0]
     for i in range(angle1.shape[0]):
         for j in range(angle2.shape[0]):
-            input_array = [inputs, [angle1[i], angle2[j]]]
+            input_array = [inputs, [radius2degree(angle1[i]), radius2degree(angle2[j])]]
+            # input_array = [inputs, [angle1[i], angle2[j]]]
+            # print(input_array)
             input_array = np.concatenate(input_array)
+            # print(input_array[-2:])
             out = model(torch.tensor(input_array).float().to(device))
-            if out.shape[0] != 1:
-                out = out.squeeze(0)
+            if len(out) == 3:
+                out = np.linalg.norm(out.cpu().detach().numpy())
+            else:
+                out = out.cpu().detach().numpy()
+            # print(out)
             output_mat[i, j] = out
-    best_angle = np.argmin(output_mat)
-    print(best_angle)
-    return_angle1, return_angle2 = np.unravel_index(np.argmin(output_mat, axis=None), output_mat.shape)
+            # print(f'Angle1: {angle1[i]}, Angle2: {angle2[j]}, Output: {out}')
+    ouyput_mat = output_mat.reshape(-1)
+    best_angle = np.argmin(ouyput_mat)
+    
+    return_angle1, return_angle2 = np.unravel_index(best_angle, output_mat.shape)
+    
+    print(return_angle1, return_angle2)
     return angle1[return_angle1], angle2[return_angle2]
             
             
-            
+def get_precentile(model, inputs, reference, targets, selected, random, device):
+    in_list = []
+    for input in inputs:
+        x = [reference[:8], input[:8]]        
+        x = np.concatenate(x)
+        x = torch.tensor(x).float().to(device)
+        in_list.append(x)
+    in_list = torch.stack(in_list)
+    out = model(in_list)
+    error = np.abs(out.cpu().detach().numpy() - targets)
+    error = np.linalg.norm(error, axis = 1)
+    # print(error)
+    selected_error = error[selected]
+    random_error = error[random]
+    error = np.sort(error)
+    rank = np.where(error == selected_error)[0][0]
+    rand_rank = np.where(error == random_error)[0][0]
+    
+    percent = 1 - (rank)/(len(error)-1)
+    rand_percent = 1 - (rand_rank)/(len(error)-1)
+    
+    
+    return percent, rand_percent
 
+def get_precentileGS(means, reference, selected, target):
+    est_list = []
+    for mean in means:
+        est = (mean + reference)/2
+        est_list.append(est)
+    est_list = np.array(est_list)
+    error = np.abs(est_list - target)
+    error = np.linalg.norm(error, axis = 1)
+    selected_error = error[selected]
+    # random_error = error[random]
+    error = np.sort(error)
+    rank = np.where(error == selected_error)[0][0]
+    # rand_rank = np.where(error == random_error)[0][0]
+    percent = 1 - (rank)/(len(error)-1)
+    # rand_percent = 1 - (rand_rank)/(len(error)-1)
+    
+    
+    return percent
+    
+        
+        
 def test_grid_search(active_model, uncertainty_model_adr, active_model_adr, data_folder, device):
     uncertainty_weight = torch.load(uncertainty_model_adr)
     active_model.load_state_dict(torch.load(active_model_adr))
@@ -754,9 +1088,11 @@ def test_grid_search(active_model, uncertainty_model_adr, active_model_adr, data
     error_before_active = [0,0,0]
     error_after_active = [0,0,0]
     improve_count = 0
+    overall_percent = 0
     GT = []
     pred1 = []
     pred2 = []
+    percents = []
     dirlist = np.random.permutation(dirlist)
     # dirlist = dirlist[:100]
     for run in dirlist:
@@ -774,25 +1110,32 @@ def test_grid_search(active_model, uncertainty_model_adr, active_model_adr, data
                 new_angle1, new_angle2 = grid_search(active_model, device, input_array)
                 print(f'New angle1: {new_angle1}, New angle2: {new_angle2}')
                 closest_idx = find_closest_angle([new_angle1, new_angle2], inputs[:, -2:])
-                new_est = (mean[closest_idx] + mean[i])/2
+                print(f'Closest idx: {closest_idx}')
+                new_est, new_std = truedistributionfromobs(mean[closest_idx], mean[i], std[closest_idx], std[i])
                 error_without_active = targets[i] - mean[i]
                 error_with_active = targets[i] - new_est
+                percent = get_precentileGS(mean, mean[i], closest_idx, targets[i])
+                print(f'Percentile: {percent}')
                 print(f'Error without active: {error_without_active}')
                 print(f'Error with active: {error_with_active}')
                 print('-----------------------------------')
                 error_before_active += np.abs(error_without_active)
                 error_after_active += np.abs(error_with_active)
+                overall_percent += percent
                 pred1.append(mean[i])
                 pred2.append(new_est)
+                percents.append(percent)
                 GT.append(targets[i])
                 if np.linalg.norm(error_with_active) < np.linalg.norm(error_without_active):
                     improve_count += 1
     print(f'Error before active: {error_before_active/len(GT)}')
     print(f'Error after active: {error_after_active/len(GT)}')
+    print(f'Overall percentile: {overall_percent/len(GT)}')
     import matplotlib.pyplot as plt
     plt.figure()
     total_error_without_active = np.linalg.norm(np.array(pred1) - np.array(GT), axis = 1)
     total_error_with_active = np.linalg.norm(np.array(pred2) - np.array(GT), axis = 1)
+    percentiles = np.array(percents)
     
     plt.figure()
     plt.subplot(2,2,1)
@@ -826,18 +1169,148 @@ def test_grid_search(active_model, uncertainty_model_adr, active_model_adr, data
     
     plt.subplot(2,2,4)
     # For last plot, plot the total error for both methods
-    plt.plot(total_error_without_active, label = 'Without Active')
-    plt.plot(total_error_with_active, label = 'With Active')
-    plt.legend()
-    plt.xlabel('Sample')
-    plt.ylabel('Error') 
-    plt.title('Total Error')
+    bins = np.linspace(0, 1, 20)
+    plt.hist(percentiles, bins=bins)
+    plt.xlabel('Percentile')
+    plt.ylabel('Count')
+    plt.title('Percentile distribution')
     save_name = active_model_adr.split('/')[-1].split('.')[0] + '_error_plot.png'
     print(f'Improvement count: {improve_count}')
     print(f'Improvement rate: {improve_count/len(GT)}')
     print('save_name: ', save_name)
     plt.savefig(save_name)
     result = [error_before_active/len(GT), error_after_active/len(GT), improve_count/len(GT)]
+    result = np.array(result).reshape(1,3).astype(np.float64)
+    np.savetxt(save_name.split('.')[0] + '_error.txt', result, fmt='%.18e', newline=' ')
+    
+def test_grid_search2(active_model, uncertainty_model_adr, active_model_adr, data_folder, device, with_raw = False):
+    uncertainty_weight = torch.load(uncertainty_model_adr, map_location = device)
+    active_model.load_state_dict(torch.load(active_model_adr))
+    active_model = active_model.to(device)
+    deter_model = RegNet(input_size=16, output_size=3)
+    deter_model = deterministic_model(uncertainty_weight, deter_model, device)
+    dirlist = os.listdir(data_folder)
+    error_no_active = [0,0,0]
+    error_with_active = [0,0,0]
+    error_with_random = [0,0,0]
+    improve_count = 0
+    overall_precentile = 0
+    GT = []
+    pred1 = []
+    pred2 = []
+    pred3 = []
+    percentiles = []
+    dirlist = np.random.permutation(dirlist)
+    # dirlist = dirlist[:100]
+    for run in dirlist:
+        if '.' in run:
+            continue
+        if len(os.listdir(os.path.join(data_folder, run))) == 0:
+            continue
+        mean, std, inputs, targets = dataset_helper(os.path.join(data_folder, run), uncertainty_model_adr, deter_model, BNN_pretrained2Pos)
+        print(run)
+        for i in range(mean.shape[0]):
+            if inputs[i][6] == 0 and inputs[i][7] == 0:
+                
+                input_array = [mean[i], std[i]]
+                input_array = np.concatenate(input_array)
+                # input_array = std[i]
+                if with_raw:
+                    input_array = np.concatenate([inputs[i][:8], input_array])
+                
+                new_angle1, new_angle2 = grid_search(active_model, device, input_array)
+                # print(f'New angle1: {new_angle1}, New angle2: {new_angle2}')
+                closest_idx = find_closest_angle([new_angle1, new_angle2], inputs[:, 6:8])
+                random_idx = np.random.randint(0, inputs.shape[0])
+                if random_idx == closest_idx:
+                    random_idx = (random_idx + 1) % inputs.shape[0]
+                two_pos_input1 = [inputs[i][:8], inputs[closest_idx][:8]]
+                two_pos_input2 = [inputs[i][:8], inputs[random_idx][:8]]
+                two_pos_input1 = np.concatenate(two_pos_input1)
+                two_pos_input2 = np.concatenate(two_pos_input2)
+                two_pos_input = [two_pos_input1, two_pos_input2]
+                two_pos_input = torch.tensor(two_pos_input).float().to(device)
+                percent = get_precentile(deter_model, inputs, inputs[i][:8], targets, closest_idx, random_idx, device)
+                # print(f'Best angle: {new_angle1}, {new_angle2}')
+                # print(f'Closeset angle: {inputs[closest_idx][6]}, {inputs[closest_idx][7]}')
+                print(f'Percentile: {percent}')
+                
+                overall_precentile += percent[0]
+                new_est = deter_model(two_pos_input).cpu().detach().numpy()
+                error1 = targets[i] - mean[i]
+                error2 = targets[i] - new_est[0]
+                error3 = targets[i] - new_est[1]
+                print(f'Norm of error with active: {np.linalg.norm(error2)}')
+                print(f'Error without active: {error1}')
+                print(f'Error with random: {error3}')
+                print(f'Error with active: {error2}')
+                print('-----------------------------------')
+                error_no_active += np.abs(error1)
+                error_with_active += np.abs(error2)
+                error_with_random += np.abs(error3)
+                pred1.append(mean[i])
+                pred2.append(new_est[0])
+                pred3.append(new_est[1])
+                GT.append(targets[i])
+                percentiles.append(percent[0])
+                if np.linalg.norm(error2) < np.linalg.norm(error1) and np.linalg.norm(error2) < np.linalg.norm(error3):
+                    improve_count += 1
+    print(f'Error before active: {error_no_active/len(GT)}')
+    print(f'Error with random: {error_with_random/len(GT)}')
+    print(f'Error after active: {error_with_active/len(GT)}')
+    print(f'Overall precentile: {overall_precentile/len(GT)}')
+    import matplotlib.pyplot as plt
+    plt.figure()
+    total_error_without_active = np.linalg.norm(np.array(pred1) - np.array(GT), axis = 1)
+    total_error_with_active = np.linalg.norm(np.array(pred2) - np.array(GT), axis = 1)
+    
+    plt.figure()
+    plt.subplot(2,2,1)
+    refer = np.linspace(-10, 10, 100)
+    # graph GT versus pred for each axis
+    plt.scatter(np.array(GT)[:,0], np.array(pred1)[:,0], label = 'Without Active')
+    plt.scatter(np.array(GT)[:,0], np.array(pred3)[:,0], label = 'With Random')
+    plt.scatter(np.array(GT)[:,0], np.array(pred2)[:,0], label = 'With Active')
+    plt.plot(refer, refer, 'r--')
+    plt.legend()
+    plt.xlabel('GT')
+    plt.ylabel('Pred')
+    plt.title('X axis')
+    
+    plt.subplot(2,2,2)
+    plt.scatter(np.array(GT)[:,1], np.array(pred1)[:,1], label = 'Without Active')
+    plt.scatter(np.array(GT)[:,1], np.array(pred3)[:,1], label = 'With Random')
+    plt.scatter(np.array(GT)[:,1], np.array(pred2)[:,1], label = 'With Active')
+    plt.plot(refer, refer, 'r--')
+    plt.legend()
+    plt.xlabel('GT')
+    plt.ylabel('Pred')
+    plt.title('Y axis')
+    
+    plt.subplot(2,2,3)
+    plt.scatter(np.array(GT)[:,2], np.array(pred1)[:,2], label = 'Without Active')
+    plt.scatter(np.array(GT)[:,2], np.array(pred3)[:,2], label = 'With Random')
+    plt.scatter(np.array(GT)[:,2], np.array(pred2)[:,2], label = 'With Active')
+    plt.plot(refer, refer, 'r--')
+    plt.legend()
+    plt.xlabel('GT')
+    plt.ylabel('Pred')
+    plt.title('Z axis')
+    
+    plt.subplot(2,2,4)
+    # For last plot, plot the total error for both methods
+    bins = np.linspace(0, 1, 20)
+    plt.hist(percentiles, bins=bins)
+    plt.xlabel('Percentile')
+    plt.ylabel('Count')
+    plt.title('Percentile distribution')
+    
+    save_name = active_model_adr.split('/')[-1].split('.')[0] + '_error_plot.png'
+    print(f'Improvement count: {improve_count}')
+    print(f'Improvement rate: {improve_count/len(GT)}')
+    print('save_name: ', save_name)
+    plt.savefig(save_name)
+    result = [error_no_active/len(GT), error_with_active/len(GT), error_with_random/len(GT), improve_count]
     result = np.array(result).reshape(1,3).astype(np.float64)
     np.savetxt(save_name.split('.')[0] + '_error.txt', result, fmt='%.18e', newline=' ')
 
@@ -939,7 +1412,7 @@ def test_grid_with_MSEGT_search(active_model, uncertainty_model_adr, active_mode
     np.savetxt(save_name.split('.')[0] + '_error.txt', result, fmt='%.18e', newline=' ')
 
 
-def test_two_pos_grid_search(active_model, uncertainty_model_adr, active_model_adr, two_pos_model_adr, data_folder, device):
+def test_two_pos_grid_search(active_model, uncertainty_model_adr, active_model_adr, two_pos_model_adr, data_folder, device, with_raw = False):
     uncertainty_weight = torch.load(uncertainty_model_adr)
     active_model.load_state_dict(torch.load(active_model_adr))
     active_model = active_model.to(device)
@@ -973,6 +1446,9 @@ def test_two_pos_grid_search(active_model, uncertainty_model_adr, active_model_a
                 
                 input_array = [mean[i], std[i]]
                 input_array = np.concatenate(input_array)
+                if with_raw:
+                    input_array = [inputs[i][:8], mean[i], std[i]]
+                    input_array = np.concatenate(input_array)
                 new_angle1, new_angle2 = grid_search(active_model, device, input_array)
                 # print(f'New angle1: {new_angle1}, New angle2: {new_angle2}')
                 closest_idx = find_closest_angle([new_angle1, new_angle2], inputs[:, -2:])
@@ -1371,7 +1847,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', '-te', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--infer', '-i', type=str2bool, nargs='?', const=True, default=False)
     parser.add_argument('--batch_size', '-bs', type=int, default=48)
-    parser.add_argument('--epochs', '-e', type=int, default=500)
+    parser.add_argument('--epochs', '-e', type=int, default=300)
     
     args = parser.parse_args()
     model_name = args.model
@@ -1387,9 +1863,11 @@ if __name__ == '__main__':
     folder = '/media/okemo/extraHDD31/samueljin/data2'
     uncertainty_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/bnn1_best_model.pth'
     twoPos_weight_addr = None
+    with_raw = False
     if model_name == 'GSNet':
-        model = GridSearchNet()
-        save_path = '/media/okemo/extraHDD31/samueljin/Model/GSNet1'
+        model = DenserNet()
+        # model = ALLNet()
+        save_path = '/media/okemo/extraHDD31/samueljin/Model/GSNet2'
         data_file_name = 'grid_search_dataset1.npy'
         test_model = test_grid_search
         inference_model = test_act_model_infer_accuracy
@@ -1411,6 +1889,37 @@ if __name__ == '__main__':
         inference_model = test_act_model_infer_accuracy
         if train:
             dataset = GridSearchDataset(folder, data_file_name = data_file_name, pre_orgainized = pre_orgainized, uncertainty_weight_addr = uncertainty_weight_addr, only_zero_init = zero_init)
+    elif model_name == 'GS2Net':
+        model = DenserNet()
+        save_path = '/media/okemo/extraHDD31/samueljin/Model/GS2Net1'
+        data_file_name = 'grid_search2_dataset1.npy'
+        # twoPos_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/MLP2Pos_best_model.pth'
+        uncertainty_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/bnn2pos2_best_model.pth'
+        test_model = test_grid_search2
+        # inference_model = test_act_model_infer_accuracy
+        if train:
+            dataset = GridSearch2Dataset(folder, data_file_name = data_file_name, pre_orgainized = pre_orgainized, uncertainty_weight_addr = uncertainty_weight_addr, only_zero_init = zero_init)
+    elif model_name == 'GS4Net':
+        model = DenserNet()
+        save_path = '/media/okemo/extraHDD31/samueljin/Model/GS2Net1'
+        data_file_name = 'grid_search4_dataset1.npy'
+        # twoPos_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/MLP2Pos_best_model.pth'
+        uncertainty_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/bnn2pos5_best_model.pth'
+        test_model = test_grid_search2
+        # inference_model = test_act_model_infer_accuracy
+        if train:
+            dataset = GridSearch2Dataset(folder, data_file_name = data_file_name, pre_orgainized = pre_orgainized, uncertainty_weight_addr = uncertainty_weight_addr, only_zero_init = zero_init)
+    elif model_name == 'GS2RawNet':
+        model = GridSearchRawNet()
+        save_path = '/media/okemo/extraHDD31/samueljin/Model/GS2RawNet1'
+        data_file_name = 'grid_search_raw_dataset1.npy'
+        # twoPos_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/MLP2Pos_best_model.pth'
+        uncertainty_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/bnn2pos_best_model.pth'
+        test_model = test_grid_search2
+        with_raw = True
+        # inference_model = test_act_model_infer_accuracy
+        if train:
+            dataset = GridSearch2wRawDataset(folder, data_file_name = data_file_name, pre_orgainized = pre_orgainized, uncertainty_weight_addr = uncertainty_weight_addr, only_zero_init = zero_init)
     elif model_name == 'ActiveNet':
         model = activeNet()
         save_path = '/media/okemo/extraHDD31/samueljin/Model/ActiveNet1'
@@ -1429,7 +1938,7 @@ if __name__ == '__main__':
             dataset = TwoPosGridSearchDataset(folder, data_file_name = data_file_name, pre_orgainized = pre_orgainized, uncertainty_weight_addr = uncertainty_weight_addr, two_pos_weight_addr = twoPos_weight_addr, only_zero_init = True)
     elif model_name == 'TwoPosGridSearchAll':
         model = GridSearchNet()
-        save_path = '/media/okemo/extraHDD31/samueljin/Model/TwoPosGridSearchAll1'
+        save_path = '/media/okemo/extraHDD31/samueljin/Model/TwoPosGridSearchALL'
         data_file_name = '2pgs_all_dataset1.npy'
         twoPos_weight_addr = '/media/okemo/extraHDD31/samueljin/Model/MLP2PosAll_best_model.pth'
         test_model = test_two_pos_grid_search
@@ -1465,12 +1974,15 @@ if __name__ == '__main__':
         train_dataset, test_dataset = torch.utils.data.random_split(dataset, [train_test_split, len(dataset) - train_test_split])
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
         test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
-        optimizer = torch.optim.RAdam(model.parameters(), lr=0.001)
+        optimizer = torch.optim.RAdam(model.parameters(), lr=0.0001)
         criterion = torch.nn.MSELoss()
         train_activenet(model, train_loader, test_loader, optimizer, criterion, device, epochs, save_path)
     if test:
         if twoPos_weight_addr is None:
-            test_model(model, uncertainty_weight_addr, save_path + '_best_model.pth', folder, device)
+            if with_raw:
+                test_model(model, uncertainty_weight_addr, save_path + '_best_model.pth', folder, device, with_raw = True)
+            else:
+                test_model(model, uncertainty_weight_addr, save_path + '_best_model.pth', folder, device)
         else:
             test_model(model, uncertainty_weight_addr, save_path + '_best_model.pth', twoPos_weight_addr, folder, device)
     if infer:

@@ -386,6 +386,9 @@ class Grasp(object):
         self.single_grasp(num_tag, 0, i, rot_num)
       else:
         self.single_grasp(num_tag, 1, i, rot_num)
+
+  def print_forwards(self):
+    print(self.ur5e_arm.forward(self.joint_state, 'matrix')[:3,3])
     
 
 if __name__ == '__main__':
@@ -395,9 +398,10 @@ if __name__ == '__main__':
   # np.random.seed(42)
   Grasp_ = Grasp(record=False)
   rospy.sleep(1)
+  Grasp_.print_forwards()
   # Grasp_.showcamera()
   # Grasp_.move_away()
-  Grasp_.data_collection_main(30,10)
+  # Grasp_.data_collection_main(30,10)
   # Grasp_.pickup()
   # Grasp_.reset(np.array([0.0, 0.6, 0.245]), np.array([0.0, 0.6, 0.245]))
   # Grasp_.yawpitchroll_from_joint()

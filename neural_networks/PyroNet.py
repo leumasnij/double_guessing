@@ -250,7 +250,7 @@ def train_svi(train_loader, num_epochs=500):
 
 def eval_and_graph(data_loader):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    weights = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn2pos_best_model.pth')
+    weights = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn2pos5_best_model.pth', map_location=device)
     
     deterministic_model = RegNet(input_size=16, output_size=3)
     deterministic_model.fc1.weight = nn.parameter.Parameter(weights['fc1_weight'].mean(0))
@@ -316,13 +316,13 @@ def eval_and_graph(data_loader):
     plt.xlabel('Error')
     plt.ylabel('Std')
     
-    plt.savefig('bnn_error_vs_std.png')
+    plt.savefig('bnn2pos_error_vs_std.png')
     print('Average error: ', np.mean(x_error), np.mean(y_error), np.mean(z_error))
     
         
 def diagnoistic_bnn():
     import arviz as az
-    posterior_samples = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn2pos_best_model.pth')
+    posterior_samples = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn2pos3_best_model.pth')
     
     
     # Convert the posterior samples to a format that ArviZ expects
@@ -377,7 +377,7 @@ def visualizing_and_evaluate_one_folder(model_address, folder, save_path):
         file_path = os.path.join(folder, file)
         data_dict = np.load(file_path, allow_pickle=True, encoding= 'latin1').item()
         inputs.append(data_dict['force'])
-        targets.append(data_dict['GT'])
+        targets.append(data_dict['GT'][:3]*100)
         if data_dict['force'][-1] == 0 and data_dict['force'][-2] == 0:
             index00 = len(inputs) - 1
     
@@ -438,7 +438,7 @@ def visualizing_and_evaluate_one_folder(model_address, folder, save_path):
     
 def vis_one_folder_2pos(model_address, folder, save_path):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    weights = torch.load(model_address)
+    weights = torch.load(model_address, map_location=device)
     model = BNN_pretrained2Pos
     # model = model.to(device)
     # model.eval()
@@ -455,17 +455,15 @@ def vis_one_folder_2pos(model_address, folder, save_path):
             file_path2 = os.path.join(folder, file2)
             data_dict1 = np.load(file_path1, allow_pickle=True, encoding= 'latin1').item()
             data_dict2 = np.load(file_path2, allow_pickle=True, encoding= 'latin1').item()
+            # print(data_dict1)
             zeor_padding = np.zeros(8)
             # print(np.concatenate((data_dict1['force'], data_dict2['force'])))
-            inputs.append(np.concatenate((data_dict1['force'], data_dict2['force'])))
-            inputs.append(np.concatenate((data_dict2['force'], data_dict1['force'])))
-            inputs.append(np.concatenate((data_dict1['force'], zeor_padding)))
-            inputs.append(np.concatenate((data_dict2['force'], zeor_padding)))
-            targets.append(data_dict2['GT'])
-            targets.append(data_dict1['GT'])
-            targets.append(data_dict2['GT'])
-            targets.append(data_dict1['GT'])
-            if data_dict1['force'][-1] == 0 and data_dict1['force'][-2] == 0:
+            inputs.append(np.concatenate([data_dict1['force'], data_dict2['force']]))
+            inputs.append(np.concatenate([data_dict2['force'], data_dict1['force']]))
+            targets.append(data_dict2['GT'][:3]*100)
+            targets.append(data_dict1['GT'][:3]*100)
+
+            if data_dict1['force'][6] == 0 and data_dict1['force'][7] == 0:
                 index00 = len(inputs) - 2
           
     
@@ -474,6 +472,7 @@ def vis_one_folder_2pos(model_address, folder, save_path):
     inputs = inputs.view(-1, 16)
     targets = torch.tensor(targets).float()
     targets = targets.view(-1, 3)
+    print(inputs.shape, targets.shape)
     inputs = inputs.to(device)
     targets = targets.to(device)
     
@@ -482,7 +481,7 @@ def vis_one_folder_2pos(model_address, folder, save_path):
     mean = outputs['obs'].mean(0)
     std = outputs['obs'].std(0).cpu().detach().numpy()
     for i in range(len(inputs)):
-        error = torch.abs(mean[i] - targets[i]).cpu().detach().numpy()
+        error = (mean[i] - targets[i]).cpu().detach().numpy()
         x_error.append(error[0])
         y_error.append(error[1])
         z_error.append(error[2])
@@ -499,7 +498,7 @@ def vis_one_folder_2pos(model_address, folder, save_path):
     plt.subplot(1,3,1)
     plt.scatter(x_error, x_std)
     plt.scatter(error00[0], std00[0], color='red')
-    # plt.ylim(1.0, 2.5)
+    plt.ylim(1.0, 2.0)
     plt.xlabel('Error')
     plt.ylabel('Std')
     plt.title('X-axis')
@@ -507,7 +506,7 @@ def vis_one_folder_2pos(model_address, folder, save_path):
     plt.subplot(1,3,2)
     plt.scatter(y_error, y_std)
     plt.scatter(error00[1], std00[1], color='red')
-    # plt.ylim(1.0, 2.5)
+    plt.ylim(1.0, 2.0)
     plt.xlabel('Error')
     plt.ylabel('Std')
     plt.title('Y-axis')
@@ -515,7 +514,7 @@ def vis_one_folder_2pos(model_address, folder, save_path):
     plt.subplot(1,3,3)
     plt.scatter(z_error, z_std)
     plt.scatter(error00[2], std00[2], color='red')
-    # plt.ylim(1.0, 2.5)
+    plt.ylim(1.0, 2.0)
     plt.xlabel('Error')
     plt.ylabel('Std')
     plt.title('Z-axis')
@@ -525,26 +524,28 @@ def vis_one_folder_2pos(model_address, folder, save_path):
     print('Average error: ', np.mean(x_error), np.mean(y_error), np.mean(z_error)) 
     
 def evaluate_main():
-    model_address = '/media/okemo/extraHDD31/samueljin/Model/bnn2pos_best_model.pth'
+    model_address = '/media/okemo/extraHDD31/samueljin/Model/bnn_best_model.pth'
     folder = '/media/okemo/extraHDD31/samueljin/data2'
-    save_path = '/media/okemo/extraHDD31/samueljin/Fig/'
+    save_path = '/media/okemo/extraHDD31/samueljin/Fig/fig/'
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     for folder_num in os.listdir(folder):
+        if '.' in folder_num:
+            continue
         print(folder_num)
         folder_num = os.path.join(folder, folder_num)
-        # visualizing_and_evaluate_one_folder(model_address, folder_num, save_path)
-        vis_one_folder_2pos(model_address, folder_num, save_path)
+        visualizing_and_evaluate_one_folder(model_address, folder_num, save_path)
+        # vis_one_folder_2pos(model_address, folder_num, save_path)
     
     
 if __name__ == '__main__':
     
     # diagnoistic_bnn()
-    train_loader = DataLoader(HapTwoPos('/media/okemo/extraHDD31/samueljin/data2'), batch_size=1800000, shuffle=True)
+    train_loader = DataLoader(HapTwoPos('/media/okemo/extraHDD31/samueljin/data2'), batch_size=1000000, shuffle=True)
     # print(len(train_loader), len(test_loader))
     # train_bnn(train_loader)
     # train_svi(train_loader)
     # bnn = BNN(torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
     # bnn.load_state_dict(torch.load('/media/okemo/extraHDD31/samueljin/Model/vbllnet_1pos_best_model.pth'))
     eval_and_graph(train_loader)
-    evaluate_main()
+    # evaluate_main()
