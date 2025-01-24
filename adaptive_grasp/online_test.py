@@ -24,9 +24,47 @@ from apriltag_helper.tag import detect_tag, img2robot, CoM_calulation, robot2img
 import torch
 import neural_networks.nn_helpers as nnh
 from cam_read import CameraCapture
-from neural_networks.ActiveNet import DenseAFNet, deterministic_model, truedistributionfromobs, grid_search, DenserNet
-from neural_networks.PyroNet import BNN_pretrained2Pos, BNN_pretrained, RegNet
+from neural_networks.ActiveNet import DenseAFNet, deterministic_model, truedistributionfromobs, grid_search
+from neural_networks.PyroNet import BNN_pretrained, RegNet
 from pyro.infer import Predictive
+
+
+def analytical_CoM(FT):
+    """
+    Calculate the mass and Center of Mass (CoM) of an object based on force and torque readings.
+    
+    Parameters:
+    - F: Numpy array of forces [Fx, Fy, Fz] in Newtons
+    - T: Numpy array of torques [Tx, Ty, Tz] in Newton-meter
+    
+    Returns:
+    - m: Calculated mass of the object in kilograms
+    - com: Numpy array of the CoM position [x, y, z] in meters (relative to the sensor position at [0, 0, 0])
+    """
+    # Constants
+    g = 9.81  # Acceleration due to gravity (m/s^2)
+    sensor_position = np.array([0, 0, 0])  # Sensor position (assumed to be at the origin)
+    F = FT[:3]  # Force vector
+    T = FT[3:]  # Torque vector
+
+    # Calculate the mass m
+    if F[2] != 0:
+        m = -F[2] / g
+    else:
+        m = 0  # Handle the case where Fz = 0 to avoid division by zero
+    
+    # Calculate the CoM based on the torque and the calculated mass
+    if m != 0 and np.linalg.norm(F) != 0:
+        # Calculate force error and torque error
+        force_error = F - m * np.array([0, 0, -g])
+        torque_error = T - np.cross(sensor_position, m * np.array([0, 0, -g]))
+        com = np.cross(torque_error, F) / np.linalg.norm(F)**2 + sensor_position
+    else:
+        com = np.array([0, 0, 0])  # Return origin if mass or force norm is zero
+
+    return com
+
+
 
 class Grasp(object):
   def __init__(self, active_model_adr, bnn_adr, bnn_model):
@@ -47,12 +85,10 @@ class Grasp(object):
     self.two_pos_model = RegNet(input_size=16, output_size=3)
     self.two_pos_weight = torch.load('/media/okemo/extraHDD31/samueljin/Model/bnn2pos5_best_model.pth', map_location=self.device)
     self.two_pos_model = deterministic_model(self.two_pos_weight, self.two_pos_model, self.device)
-
-    
     
     # self.reset_joint = [ 1.21490335, -1.32038331,  1.51271999, -1.76500773, -1.57009947,  1.21490407]
     self.reset_joint = [ 1.21490335, -1.283166,  1.6231562, -1.910088, -1.567829,  -0.359537]
-    self.start_loc = np.array([0.0, 0.6, 0.33])
+    self.start_loc = np.array([-0.0, 0.55, 0.34])
     # self.start_yaw = -np.pi/2 
     self.start_yaw = 2e-3
     self.start_pitch = 2e-3
@@ -107,7 +143,7 @@ class Grasp(object):
     # self.realsense = RealSenseCam()
     self.overhead_cam = None
     # self.marker_gelsight = None
-    self.init_cam()
+    # self.init_cam()
 
 
   def init_cam(self):
@@ -200,9 +236,6 @@ class Grasp(object):
     # rospy.sleep(1)
     if joint is None:
        joint = self.ur5e_arm.inverse(self.start_mat, False, q_guess=self.joint_state)
-    # self.reset_gripper()
-    # print(self.joint_state)
-    # print(inverse_kinematic(self.joint_state, self.start_loc, self.start_rot))
 
     self.move_to_joint(joint, 2)
     rospy.sleep(3)
@@ -281,7 +314,7 @@ class Grasp(object):
       device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
       input = np.concatenate((mean, std))
       # input = torch.tensor(input, dtype=torch.float32).float().to(device)
-      angle1, angle2 = grid_search(self.active_model, device=device, inputs=input, grid_size=100)
+      angle1, angle2 = grid_search(self.active_model, device=device, inputs=input, grid_size=50)
       return angle1, angle2
   
   def estimate_two_pos(self, input):
@@ -324,6 +357,8 @@ class Grasp(object):
       print('First Estimation Start')
       mean, std = self.estimate_CoM(force, ret_std=True)
       print('First Estimation: ' + str(mean))
+      ana_mean = analytical_CoM(force)
+      print('Analytical: ' + str(ana_mean*100))
       angle1, angle2 = self.estimate_action(mean, std)
       print('New Angles: ' + str(angle1) + ' ' + str(angle2))
       new_joint = self.joint_state.copy()
@@ -337,10 +372,10 @@ class Grasp(object):
       rand_angle1 = np.random.uniform(-np.pi/2, np.pi/2)
       rand_angle2 = np.random.uniform(5*np.pi/6, np.pi/6)
       print('Random Angles: ' + str(rand_angle1) + ' ' + str(rand_angle2))
-      rand_joint = self.start_up_joint.copy()
-      rand_joint[-1] += rand_angle1
-      rand_joint[-2] += rand_angle2
-      self.move_to_joint(rand_joint, 3)
+      # rand_joint = self.start_up_joint.copy()
+      # rand_joint[-1] += rand_angle1
+      # rand_joint[-2] += rand_angle2
+      # self.move_to_joint(rand_joint, 3)
       rospy.sleep(8)
       force3 = self.force_torque
 
@@ -354,23 +389,10 @@ class Grasp(object):
       rospy.sleep(2)
       ref_force = self.calib_force(angle1, angle2)
       force2 = force2 - ref_force
-      ref_force = self.calib_force(rand_angle1, rand_angle2)
-      force3 = force3 - ref_force
-      mean2, std2 = self.estimate_CoM(force2, angle1=angle1, angle2=angle2, ret_std=True)
-      rand_mean, rand_std = self.estimate_CoM(force3, angle1=rand_angle1, angle2=rand_angle2, ret_std=True)
-      print('Second Estimation: ' + str(mean2))
-      mean_active, _ = truedistributionfromobs(mean, mean2,std, std2)
-      mean_rand, _ = truedistributionfromobs(mean, rand_mean, std, rand_std)
-      print('Active: ' + str(mean_active) + ' Random: ' + str(mean_rand))
       self.move_to_joint(self.start_up_joint, 5)
-      # self.mark_CoM(mean_actual)
-      # return mean_actual
-
-      two_pos_input = np.concatenate((force, [0,0]))
-      two_pos_input = np.concatenate((two_pos_input, force2))
-      two_pos_input = np.concatenate((two_pos_input, [angle1, angle2]))
-      two_pos_mean = self.estimate_two_pos(two_pos_input)
-      print('Two Pos Mean: ' + str(two_pos_mean))
+      rospy.sleep(5)
+      return
+ 
 
 
 
@@ -378,10 +400,12 @@ class Grasp(object):
     num_tag = int(input('Number of Tags: '))
     rospy.sleep(1)
     self.move_away()
+    ret,frame = self.overhead_cam.read()
     main_tag, main_center, CoM, no_grasp_zone, moi = CoM_calulation(self.overhead_cam,num_tag)
     side = np.random.choice([0,1])
     move_loc, rot = self.generate_rand_grasp(main_tag, main_center, CoM, side)
-
+    # print(1)
+    no_grasp_zone = no_grasp_zone - np.array([-0.03,0.03,-0.03,0.02,-0.0,0.0])
     if no_grasp_zone != []:
       flag = True
       while flag:
@@ -403,10 +427,13 @@ class Grasp(object):
     self.move_to_joint(self.start_up_joint, 5)
     rospy.sleep(10)
     force = self.force_torque - ref_force
+    two_pos_input = np.concatenate((force, [0.0,0.0]))
     print(force)
     print('First Estimation Start')
     mean, std = self.estimate_CoM(force, ret_std=True)
     print('First Estimation: ' + str(mean))
+    ana_mean = analytical_CoM(force)
+    print('Analytical: ' + str(ana_mean*100))
     angle1, angle2 = self.estimate_action(mean, std)
     print('New Angles: ' + str(angle1) + ' ' + str(angle2))
     new_joint = self.joint_state.copy()
@@ -416,6 +443,7 @@ class Grasp(object):
     self.move_to_joint(new_joint, 3)
     rospy.sleep(8)
     force2 = self.force_torque
+    
 
     rand_angle1 = np.random.uniform(-np.pi/2, np.pi/2)
     rand_angle2 = np.random.uniform(5*np.pi/6, np.pi/6)
@@ -438,27 +466,29 @@ class Grasp(object):
     rospy.sleep(2)
     ref_force = self.calib_force(angle1, angle2)
     force2 = force2 - ref_force
+    two_pos_input = np.concatenate((two_pos_input, force2))
+    two_pos_input = np.concatenate((two_pos_input, [angle1, angle2]))
     ref_force = self.calib_force(rand_angle1, rand_angle2)
     force3 = force3 - ref_force
     mean2, std2 = self.estimate_CoM(force2, angle1=angle1, angle2=angle2, ret_std=True)
     rand_mean, rand_std = self.estimate_CoM(force3, angle1=rand_angle1, angle2=rand_angle2, ret_std=True)
     print('Second Estimation: ' + str(mean2))
-    mean_active, _ = truedistributionfromobs(mean, mean2,std, std2)
+    mean_active, std_active = truedistributionfromobs(mean, mean2,std, std2)
     mean_rand, _ = truedistributionfromobs(mean, rand_mean, std, rand_std)
     print('Active: ' + str(mean_active) + ' Random: ' + str(mean_rand))
     self.move_to_joint(self.start_up_joint, 5)
-    two_pos_input = np.concatenate((force, [0,0]))
-    two_pos_input = np.concatenate((two_pos_input, force2))
-    two_pos_input = np.concatenate((two_pos_input, [angle1, angle2]))
+    
     two_pos_mean = self.estimate_two_pos(two_pos_input)
     print('Two Pos Mean: ' + str(two_pos_mean))
     # return GT, mean_active, mean_rand, two_pos_mean
+
+    self.mark_CoM(frame, - mean/100 + move_loc, std/100, - mean2/100 + move_loc, std2/100, - mean_active/100 + move_loc, CoM)
 
 
   def generate_rand_grasp(self, main_tag, main_center, CoM, side):
     height = np.random.uniform(0.232, 0.272)
     if main_tag == 0:
-      offset = np.random.uniform(-0.07, 0.07)
+      offset = np.random.uniform(-0.055, 0.045)
       move_loc = np.array([main_center[0] + offset, main_center[1], height])
       rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
     elif main_tag == 1:
@@ -472,18 +502,43 @@ class Grasp(object):
         rot = self.ypr_to_mat(2e-3, 2e-3, np.pi)
     return move_loc, rot
   
-  def mark_CoM(self, CoM):
+  def mark_CoM(self, frame, est_CoM, est_std, est_CoM2, est_std2, active_CoM, actual_CoM = None):
       
+      if actual_CoM is not None:
+        actual_CoM = np.array(actual_CoM)
+        actual_CoM = np.array([actual_CoM[0], actual_CoM[1], 1])
+        frame_loc1 = robot2img(actual_CoM).astype(int)
+        cv2.circle(frame, (frame_loc1[0], frame_loc1[1]), 2, (0,0,255), -1)
+
+      est_CoM = np.array(est_CoM)
+      est_std = np.array(est_std)
+      est_CoM = np.array([est_CoM[0], est_CoM[1], 1])
+      est_std = np.array([est_std[0], est_std[1], 1])
+      
+      frame_loc2 = robot2img(est_CoM).astype(int)
+      frame_std = robot2img([est_CoM[0] + est_std[0] , est_CoM[1] + est_std[1], 1])
+      frame_std -= robot2img([est_CoM[0], est_CoM[1], 1])
+      frame_std = np.array(frame_std.astype(int))
+      frame_std = np.abs(frame_std)
+      frame_loc3 = robot2img(est_CoM2).astype(int)
+      frame_std2 = robot2img([est_CoM2[0] + est_std2[0] , est_CoM2[1] + est_std2[1], 1])
+      frame_std2 -= robot2img([est_CoM2[0], est_CoM2[1], 1])
+      frame_std2 = np.array(frame_std2.astype(int))
+      frame_std2 = np.abs(frame_std2)
+      frame_loc4 = robot2img(active_CoM).astype(int)
+
+      cv2.circle(frame, (frame_loc2[0], frame_loc2[1]), 2, (255,0,0), -1)
+      cv2.ellipse(frame, (frame_loc2[0], frame_loc2[1]), (frame_std[0], frame_std[1]), 0, 0, 360, (255,0,0), 1)
+      cv2.imwrite('CoM1.jpg', frame.astype(np.uint8))
+      cv2.circle(frame, (frame_loc3[0], frame_loc3[1]), 2, (0,255,0), -1)
+      cv2.ellipse(frame, (frame_loc3[0], frame_loc3[1]), (frame_std2[0], frame_std2[1]), 0, 0, 360, (0,255,0), 1)
+      cv2.imwrite('CoM2.jpg', frame.astype(np.uint8))
+      cv2.circle(frame, (frame_loc4[0], frame_loc4[1]), 2, (0,0, 255), -1)
       while True:
-          frame = self.overhead_cam.read()
-          grasp_loc = self.ur5e_arm.forward(self.start_joint, 'matrix')
-          grasp_loc = grasp_loc[:3,3]
-          grasp_loc = grasp_loc + CoM
-          grasp_loc = grasp_loc[:2]/100
-          frame_loc = robot2img(grasp_loc)
-          cv2.circle(frame, (int(frame_loc[0]), int(frame_loc[1])), 5, (0,0,255), 1)
+          # frame = cv2.resize(frame, (1280,960))
           cv2.imshow('frame', frame)
           if cv2.waitKey(1) & 0xFF == ord('q'):
+              cv2.imwrite('CoM.jpg', frame.astype(np.uint8))
               break
       
   
@@ -499,6 +554,7 @@ if __name__ == '__main__':
   rospy.sleep(1)
   print('Initialized')
   # Grasp_.estimate_CoM([0,0,0,0,0,0], 0.0, 0.0, True)
-  # Grasp_.test_main()
-  Grasp_.box_test()
+  Grasp_.test_main()
+  # Grasp_.mark_CoM(0,0,0,0,0,0,0)
+  # Grasp_.box_test()
   # Grasp_.estimate_action([0.0,0.0,0.0], [0.0,0.0,0.0])

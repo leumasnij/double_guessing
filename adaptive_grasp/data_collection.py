@@ -90,7 +90,7 @@ class Grasp(object):
     # self.realsense = RealSenseCam()
     self.overhead_cam = None
     # self.marker_gelsight = None
-    self.init_cam()
+    # self.init_cam()
 
 
   def init_cam(self):
@@ -157,7 +157,7 @@ class Grasp(object):
     self.pos_controller.publish(pos_message)
   
   def reset_gripper(self):
-    gripper.move(20)
+    gripper.move(50)
 
   def grasp_part(self, force):
     gripper.set_force(force)
@@ -185,6 +185,8 @@ class Grasp(object):
     self.move_to_joint(joint, 2)
     rospy.sleep(5)
     # self.cali_force()
+
+    input1 = input('Press Enter to continue')
 
     self.grasp_part(force)
     up_mat = self.up_joint(joint=joint)
@@ -300,42 +302,45 @@ class Grasp(object):
   def single_grasp(self, num_tag, side, testid = 0, size = 20):
     rospy.sleep(1)
     self.move_away()
-    main_tag, main_center, CoM, no_grasp_zone, moi = CoM_calulation(self.overhead_cam,num_tag)
-    move_loc, rot = self.generate_rand_grasp(main_tag, main_center, CoM, side)
-    if no_grasp_zone != []:
-      flag = True
-      while flag:
-        for i in no_grasp_zone:
-          if i[0] <= move_loc[0] <= i[1] and i[2] <= move_loc[1] <= i[3] and i[4] <= move_loc[2] <= i[5]:
-            flag = True
-            move_loc, rot = self.generate_rand_grasp(main_tag, main_center, CoM, side)
-            break
-          flag = False
+    # main_tag, main_center, CoM, no_grasp_zone, moi = CoM_calulation(self.overhead_cam,num_tag)
+    # move_loc, rot = self.generate_rand_grasp(main_tag, main_center, CoM, side)
+    move_loc = np.array([-0.0, 0.55, 0.25])
+    rot = self.start_rot
+    # if no_grasp_zone != []:
+    #   flag = True
+    #   while flag:
+    #     for i in no_grasp_zone:
+    #       if i[0] <= move_loc[0] <= i[1] and i[2] <= move_loc[1] <= i[3] and i[4] <= move_loc[2] <= i[5]:
+    #         flag = True
+    #         move_loc, rot = self.generate_rand_grasp(main_tag, main_center, CoM, side)
+    #         break
+    #       flag = False
     joint = self.ur5e_arm.inverse(self.loc2mat(move_loc, rot), False, q_guess=self.joint_state)
-    GT = move_loc - CoM
-    GT = np.append(GT, moi)
+    # GT = move_loc - CoM
+    # GT = np.append(GT, moi)
     up_joint = self.up_joint(joint)
-    print('Main Center: ' + str(main_center) + ' Move Loc: ' + str(move_loc))
+    # print('Main Center: ' + str(main_center) + ' Move Loc: ' + str(move_loc))
     for i in range(size):
       testid2 = i + testid*size
       self.move_to_joint(up_joint, 5)
       rospy.sleep(5)
       self.pickup(joint=joint)
-      FT_array, rot_array = self.single_trial(1, testid2)
-      if i == size - 1:
-        self.reset(main_center, move_loc)
-      else:
-        self.move_to_joint(up_joint, 5)
-        rospy.sleep(5)
-        self.move_to_joint(joint, 5)
-        rospy.sleep(5)
-        self.reset_gripper()
-        self.move_to_joint(up_joint, 2)
-        rospy.sleep(2)
+      FT_array, rot_array = self.single_trial(10, 10)
+      # if i == size - 1:
+      #   self.reset(main_center, move_loc)
+      # else:
+      self.move_to_joint(up_joint, 5)
+      rospy.sleep(5)
+      self.move_to_joint(joint, 5)
+      rospy.sleep(5)
+      self.reset_gripper()
+      self.move_to_joint(up_joint, 2)
+      rospy.sleep(2)
       FT_array = np.array(FT_array)
       rot_array = np.array(rot_array)
       FT_final = self.calibration(rot_array, FT_array)
-      self.save_data(FT_final, rot_array, GT, testid2)
+      print(FT_final)
+      # self.save_data(FT_final, rot_array, GT, testid2)
     
     
   
@@ -398,10 +403,10 @@ if __name__ == '__main__':
   # np.random.seed(42)
   Grasp_ = Grasp(record=False)
   rospy.sleep(1)
-  Grasp_.print_forwards()
+  # Grasp_.print_forwards()
   # Grasp_.showcamera()
   # Grasp_.move_away()
-  # Grasp_.data_collection_main(30,10)
+  Grasp_.data_collection_main(30,10)
   # Grasp_.pickup()
   # Grasp_.reset(np.array([0.0, 0.6, 0.245]), np.array([0.0, 0.6, 0.245]))
   # Grasp_.yawpitchroll_from_joint()

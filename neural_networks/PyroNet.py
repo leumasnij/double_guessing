@@ -1,11 +1,9 @@
 import os
 import pyro.infer
 import torch
-import vbll
 import torch.nn as nn
 from tqdm import tqdm
-from nn_helpers import HapticDataset, HapDatasetFromTwoPos, HapOnePos, HapTwoPos
-from vbllnet import RegNet
+from nn_helpers import RegNet, HapTwoPos
 from torch.utils.data import DataLoader
 import pyro
 import pyro.distributions as dist

@@ -30,18 +30,17 @@ class RegNet(nn.Module):
         super(RegNet, self).__init__()
         # Define the layers
         self.fc1 = nn.Linear(input_size, 256)  # input layer (6) -> hidden layer (12)
-        self.fc2 = nn.Linear(256, 64) # hidden layer (12) -> hidden layer (24)
-        self.fc3 = nn.Linear(64, output_size) # hidden layer (24) -> hidden layer (12)
-        self.dropout = nn.Dropout(0.2)
+        self.fc2 = nn.Linear(256, 128) # hidden layer (12) -> hidden layer (24)
+        self.fc3 = nn.Linear(128, 64) # hidden layer (24) -> output layer (2)
+        self.fc4 = nn.Linear(64, output_size)
 
         
     def forward(self, x):
         # Define the forward pass
         x = torch.relu(self.fc1(x))
-        x = self.dropout(x)
         x = torch.relu(self.fc2(x))
-        x = self.dropout(x)
-        x = self.fc3(x)  # Output layer, no activation function (for regression tasks)
+        x = torch.relu(self.fc3(x))
+        x = self.fc4(x)
         return x
 class HapNetWithUncertainty(nn.Module):
     def __init__(self, input_size=6, output_size=4):
