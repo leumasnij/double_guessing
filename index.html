@@ -177,7 +177,7 @@
           Targeting a generalized and robust CoM estimation framework, we propose U-GRAPH: Uncertainty-Guided Rotational Active Perception with Haptics. This system incorporates a BNN that processes 6-dimensional force-torque readings and 2-dimensional orientation data to yield a 3-dimensional CoM estimation. U-GRAPH also features ActiveNet, which utilizes the output from the BNN to determine the next best action. Assuming the robot has already grasped the object, we perform two measurements at different orientations to accurately estimate its CoM. The BNN supplies both prior predictions and quantifies uncertainty through the standard deviation. The ActiveNet takes in prior estimation distribution and uses grid search to calculate a score for each action to determine the best one. Specifically, the action space is the 2-dimensional orientation of the grasping pose. We define the action executed as changing the pose. For inference, we first use the fixed orientation to generate a prior estimation of the CoM location. Then ActiveNet performs a grid search over the entire action space and calculates the score for each action with prior estimation as input. 
         </p>
       </div>
-        <img src="static/images/active.png" />
+        <img src="static/images/active2.png" />
       </div>
     </div>
   </div>
