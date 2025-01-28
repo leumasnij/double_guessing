@@ -146,6 +146,19 @@
   </div>
 </section>
 
+<section class="hero is-small is-light">
+  <div class="hero-body">
+    <div class="container is-max-desktop">
+      <h2 class="title is-4">Data Collection Setup</h2>
+      <div class="content has-text-justified">
+        <p>
+          The hardware system features a 6-DoF UR5e robot arm. Attached to the robot's wrist is a 6-axis NRS-6050-D80 F/T sensor from Nordbo Robotics with a sampling rate of 1000 Hz. The arm is also equipped with a WSG-50 2-fingered gripper from Weiss Robotics with customized PLA 3D-printed fingers. For data collection, we designed and 3D-printed two objects with dimensions of 15cm $\times$ 15cm $\times$ 8cm, each including two holders sized 4cm $\times$ 4cm for placing AprilTags \cite{olson2011tags}. The plate object weighs 127.36 grams and allows grasp onto the center. The box object weighs 185.36 grams and is designated to be grasped on the side. We utilize standard laboratory weights for the experiments, specifically two 100-gram weights and one 200-gram weight.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section class="hero is-small">
   <div class="hero-body">
     <div class="container is-max-desktop">
@@ -155,7 +168,8 @@
           Targeting a generalized and robust CoM estimation framework, we propose U-GRAPH: Uncertainty-Guided Rotational Active Perception with Haptics. This system incorporates a BNN that processes 6-dimensional force-torque readings and 2-dimensional orientation data to yield a 3-dimensional CoM estimation. U-GRAPH also features ActiveNet, which utilizes the output from the BNN to determine the next best action. Assuming the robot has already grasped the object, we perform two measurements at different orientations to accurately estimate its CoM. The BNN supplies both prior predictions and quantifies uncertainty through the standard deviation. The ActiveNet takes in prior estimation distribution and uses grid search to calculate a score for each action to determine the best one. Specifically, the action space is the 2-dimensional orientation of the grasping pose. We define the action executed as changing the pose. For inference, we first use the fixed orientation to generate a prior estimation of the CoM location. Then ActiveNet performs a grid search over the entire action space and calculates the score for each action with prior estimation as input. 
         </p>
         /div>
-        <img src="static/images/active.png" />
+        <img src="static/images/setup.png" alt="img 1" style="width: 48%; height: auto;" />
+        <img src="static/images/modeling3.png" alt="img 2" style="width: 48%; height: auto;" />
       </div>
     </div>
   </div>
@@ -166,26 +180,11 @@
 
 
 <!-- experiments-->
-<section class="hero is-small is-light">
-  <div class="hero-body">
-    <div class="container is-max-desktop">
-      <h2 class="title is-3">Experiments</h2>
-      <h2 class="title is-4">Data Collection Setup</h2>
-      <div class="content has-text-justified">
-        <p>
-          The hardware system features a 6-DoF UR5e robot arm. Attached to the robot's wrist is a 6-axis NRS-6050-D80 F/T sensor from Nordbo Robotics with a sampling rate of 1000 Hz. The arm is also equipped with a WSG-50 2-fingered gripper from Weiss Robotics with customized PLA 3D-printed fingers. For data collection, we designed and 3D-printed two objects with dimensions of 15cm $\times$ 15cm $\times$ 8cm, each including two holders sized 4cm $\times$ 4cm for placing AprilTags \cite{olson2011tags}. The plate object weighs 127.36 grams and allows grasp onto the center. The box object weighs 185.36 grams and is designated to be grasped on the side. We utilize standard laboratory weights for the experiments, specifically two 100-gram weights and one 200-gram weight.
-        </p>
-      </div>
-      <div style="text-align: center;">
-        <img width="700" src="static/images/setup.png">
-     </div>
-    </div>
-  </div>
-</section>
 
 <section class="hero is-small is-light">
   <div class="hero-body">
     <div class="container is-max-desktop">
+      <h2 class="title is-3">Experiments</h2>
       <h2 class="title is-4">Training Sets Estimation Results</h2>
       <div class="content has-text-justified">
         <p>
@@ -224,7 +223,7 @@
     <div class="container is-max-desktop">
       <h2 class="title">Paper</h2>
 
-      <iframe  src="static/pdfs/LDGAP.pdf" width="100%" height="950">
+      <iframe  src="static/pdf/LDGAP.pdf" width="100%" height="950">
           </iframe>
         
       </div>
